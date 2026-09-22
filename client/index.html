@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Breachpoint</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23111820'/><path d='M32 10v14M32 40v14M10 32h14M40 32h14' stroke='%23ff8a3d' stroke-width='5' stroke-linecap='round'/><circle cx='32' cy='32' r='4' fill='%23ffd24a'/></svg>">
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/" } }</script>
+</head>
+<body>
+<div id="app">
+  <div id="canvas-wrap"></div>
+
+  <!-- ============================== HUD ============================== -->
+  <div id="hud" hidden>
+    <div id="vignette"></div>
+    <div id="dmg-flash"></div>
+    <div id="dmg-indicators"></div>
+    <div id="scope" hidden>
+      <div class="scope-ring"></div>
+      <div class="scope-line h"></div><div class="scope-line v"></div>
+    </div>
+    <div id="crosshair">
+      <i class="ch t"></i><i class="ch b"></i><i class="ch l"></i><i class="ch r"></i><i class="ch dot"></i>
+    </div>
+    <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+
+    <div id="hud-top">
+      <div class="team-side left">
+        <div class="alive-dots" id="alive-left"></div>
+        <div class="team-score" id="score-left">0</div>
+      </div>
+      <div class="timer-box">
+        <div id="round-timer">1:55</div>
+        <div id="round-label">ROUND 1</div>
+      </div>
+      <div class="team-side right">
+        <div class="team-score" id="score-right">0</div>
+        <div class="alive-dots" id="alive-right"></div>
+      </div>
+    </div>
+    <div id="bomb-indicator" hidden><span class="bomb-icon"></span><span id="bomb-text">BOMB PLANTED</span></div>
+
+    <div id="killfeed"></div>
+    <canvas id="radar" width="220" height="220"></canvas>
+
+    <div id="center-msg"><div class="big"></div><div class="small"></div></div>
+    <div id="hint"></div>
+    <div id="progress" hidden><div class="label"></div><div class="bar"><div class="fill"></div></div></div>
+
+    <div id="hud-bl">
+      <div id="money-box"><span class="money-sign">$</span><span id="money">800</span><span id="money-delta"></span></div>
+      <div id="vitals">
+        <div class="vital"><span class="icon hp-icon"></span><span id="hp">100</span></div>
+        <div class="vital"><span class="icon armor-icon" id="armor-icon"></span><span id="armor">0</span></div>
+        <div id="kit-icon" class="pill" hidden>KIT</div>
+        <div id="bomb-carry" class="pill bomb" hidden>BOMB</div>
+      </div>
+    </div>
+
+    <div id="hud-br">
+      <div id="weapon-slots"></div>
+      <div id="ammo-box">
+        <div id="weapon-name">P9 Striker</div>
+        <div class="ammo"><span id="ammo-mag">20</span><span class="sep">/</span><span id="ammo-res">120</span></div>
+      </div>
+    </div>
+
+    <div id="chat-log"></div>
+    <div id="chat-input-wrap" hidden>
+      <span id="chat-mode">ALL</span>
+      <input id="chat-input" maxlength="140" autocomplete="off" spellcheck="false">
+    </div>
+
+    <div id="spectate-info" hidden></div>
+    <div id="death-info" hidden></div>
+    <div id="gg-info" hidden></div>
+    <div id="fps" hidden></div>
+    <div id="net-warn" hidden>Connection problem…</div>
+  </div>
+
+  <div id="flash-overlay"><canvas id="flash-after"></canvas><div id="flash-white"></div></div>
+
+  <!-- ============================== TITLE ============================== -->
+  <div id="screen-title" class="screen">
+    <div class="title-bg"></div>
+    <div class="title-card">
+      <div class="logo"><span>BREACH</span><span class="accent">POINT</span></div>
+      <div class="tagline">Tactical shooter for you and your friends</div>
+      <div class="server-line" id="server-line">Connecting to server…</div>
+      <label class="field">
+        <span>Your name</span>
+        <input id="name-input" maxlength="16" placeholder="Enter a name" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field" id="password-field" hidden>
+        <span>Server password</span>
+        <input id="password-input" type="password" maxlength="64" autocomplete="off">
+      </label>
+      <button id="join-btn" class="btn primary big">PLAY</button>
+      <div class="row gap">
+        <button id="title-settings-btn" class="btn">Settings</button>
+        <button id="title-controls-btn" class="btn">Controls</button>
+      </div>
+      <div class="error" id="title-error"></div>
+      <div class="foot">Works with keyboard &amp; mouse or a controller · Chrome, Edge, Safari &amp; Firefox</div>
+    </div>
+  </div>
+
+  <!-- ============================== LOBBY ============================== -->
+  <div id="screen-lobby" class="screen" hidden>
+    <div class="lobby">
+      <div class="lobby-head">
+        <div class="logo small"><span>BREACH</span><span class="accent">POINT</span></div>
+        <div class="lobby-server"><div id="lobby-server-name">Server</div><div id="lobby-addresses" class="dim"></div></div>
+        <div class="row gap">
+          <button id="lobby-settings-btn" class="btn">Settings</button>
+          <button id="lobby-leave-btn" class="btn">Leave</button>
+        </div>
+      </div>
+      <div class="lobby-body">
+        <div class="teams">
+          <div class="team-col att" id="team-col-1">
+            <div class="team-title"><span>ATTACKERS</span><button class="btn small" data-join="1">Join</button></div>
+            <ul class="player-list" id="list-1"></ul>
+            <div class="bot-ctl host-only"><button class="btn small" data-addbot="1">+ Bot</button><button class="btn small" data-rembot="1">− Bot</button></div>
+          </div>
+          <div class="team-col def" id="team-col-2">
+            <div class="team-title"><span>DEFENDERS</span><button class="btn small" data-join="2">Join</button></div>
+            <ul class="player-list" id="list-2"></ul>
+            <div class="bot-ctl host-only"><button class="btn small" data-addbot="2">+ Bot</button><button class="btn small" data-rembot="2">− Bot</button></div>
+          </div>
+          <div class="team-col spec" id="team-col-0">
+            <div class="team-title"><span>SPECTATORS</span><button class="btn small" data-join="0">Join</button></div>
+            <ul class="player-list" id="list-0"></ul>
+          </div>
+        </div>
+        <div class="lobby-side">
+          <div class="panel" id="match-settings">
+            <div class="panel-title">MATCH <span class="host-badge" id="host-badge"></span></div>
+            <div class="setting"><label>Mode</label><select id="set-mode"></select></div>
+            <div class="mode-desc dim" id="mode-desc"></div>
+            <div class="setting"><label>Map</label><select id="set-map"></select></div>
+            <div class="mode-desc dim" id="map-desc"></div>
+            <div class="setting defuse-only"><label>Rounds</label><select id="set-rounds"><option value="8">8 (first to 5)</option><option value="12">12 (first to 7)</option><option value="16">16 (first to 9)</option><option value="24">24 (first to 13)</option></select></div>
+            <div class="setting defuse-only"><label>Round time</label><select id="set-roundtime"><option value="90">1:30</option><option value="115">1:55</option><option value="150">2:30</option></select></div>
+            <div class="setting dm-only"><label>Kill limit</label><select id="set-score"><option value="15">15</option><option value="25">25</option><option value="40">40</option><option value="60">60</option><option value="100">100</option></select></div>
+            <div class="setting dm-only"><label>Time limit</label><select id="set-time"><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option></select></div>
+            <div class="setting"><label>Fill with bots</label><select id="set-fill"><option value="0">Off</option><option value="1">1 per team</option><option value="2">2 per team</option><option value="3">3 per team</option><option value="4">4 per team</option><option value="5">5 per team</option></select></div>
+            <div class="setting"><label>Bot skill</label><select id="set-botdiff"><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></div>
+            <div class="setting"><label>Friendly fire</label><select id="set-ff"><option value="false">Off</option><option value="true">On</option></select></div>
+            <div class="row gap host-only" style="margin-top:12px">
+              <button id="shuffle-btn" class="btn">Shuffle teams</button>
+              <button id="start-btn" class="btn primary">START MATCH</button>
+            </div>
+            <div class="dim not-host-note" id="not-host-note">Waiting for the host to start the match…</div>
+            <button id="rejoin-btn" class="btn primary" hidden>JOIN MATCH IN PROGRESS</button>
+          </div>
+          <div class="panel chat-panel">
+            <div class="panel-title">CHAT</div>
+            <div id="lobby-chat-log"></div>
+            <input id="lobby-chat-input" maxlength="140" placeholder="Say something…" autocomplete="off">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================== OVERLAYS ============================== -->
+  <div id="overlay-loading" class="overlay" hidden>
+    <div class="loading-card"><div class="spinner"></div><div id="loading-text">Loading map…</div></div>
+  </div>
+
+  <div id="overlay-buy" class="overlay" hidden>
+    <div class="buy-card">
+      <div class="buy-head">
+        <div class="buy-title">BUY MENU</div>
+        <div class="buy-money">$<span id="buy-money">800</span></div>
+        <div class="buy-timer dim" id="buy-timer"></div>
+      </div>
+      <div class="buy-grid" id="buy-grid"></div>
+      <div class="buy-foot dim">Click or press the number keys · <b>B</b> / <b>Esc</b> to close · Controller: D-pad + A, B to close</div>
+    </div>
+  </div>
+
+  <div id="overlay-scoreboard" class="overlay passthrough" hidden>
+    <div class="sb-card">
+      <div class="sb-head"><span id="sb-title">SCOREBOARD</span><span id="sb-sub" class="dim"></span></div>
+      <div id="sb-body"></div>
+    </div>
+  </div>
+
+  <div id="overlay-pause" class="overlay" hidden>
+    <div class="menu-card">
+      <div class="logo small"><span>BREACH</span><span class="accent">POINT</span></div>
+      <button class="btn primary big" id="resume-btn">RESUME</button>
+      <button class="btn" id="pause-team-btn">Change team</button>
+      <button class="btn" id="pause-settings-btn">Settings</button>
+      <button class="btn" id="pause-controls-btn">Controls</button>
+      <button class="btn host-only" id="pause-end-btn">End match (back to lobby)</button>
+      <button class="btn" id="pause-leave-btn">Disconnect</button>
+      <div class="dim small-text">Click RESUME to capture the mouse again.</div>
+    </div>
+  </div>
+
+  <div id="overlay-team" class="overlay" hidden>
+    <div class="menu-card">
+      <div class="panel-title">CHOOSE TEAM</div>
+      <button class="btn big att-btn" data-team="1">ATTACKERS</button>
+      <button class="btn big def-btn" data-team="2">DEFENDERS</button>
+      <button class="btn" data-team="0">Spectate</button>
+      <button class="btn" id="team-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <div id="overlay-settings" class="overlay" hidden>
+    <div class="settings-card">
+      <div class="settings-head">
+        <div class="panel-title">SETTINGS</div>
+        <div class="tabs" id="settings-tabs">
+          <button class="tab active" data-tab="game">Game</button>
+          <button class="tab" data-tab="video">Video</button>
+          <button class="tab" data-tab="audio">Audio</button>
+          <button class="tab" data-tab="crosshair">Crosshair</button>
+          <button class="tab" data-tab="keys">Keys</button>
+          <button class="tab" data-tab="pad">Controller</button>
+        </div>
+      </div>
+      <div class="settings-body" id="settings-body"></div>
+      <div class="settings-foot"><button class="btn" id="settings-reset">Reset to defaults</button><button class="btn primary" id="settings-close">Done</button></div>
+    </div>
+  </div>
+
+  <div id="overlay-controls" class="overlay" hidden>
+    <div class="settings-card controls-card">
+      <div class="panel-title">CONTROLS</div>
+      <div class="controls-grid" id="controls-grid"></div>
+      <div class="settings-foot"><button class="btn primary" id="controls-close">Got it</button></div>
+    </div>
+  </div>
+
+  <div id="overlay-end" class="overlay" hidden>
+    <div class="end-card">
+      <div class="end-title" id="end-title">VICTORY</div>
+      <div class="end-sub" id="end-sub"></div>
+      <div id="end-board"></div>
+      <div class="dim" id="end-return"></div>
+    </div>
+  </div>
+
+  <div id="click-to-play" hidden><div>CLICK TO PLAY</div><small>Esc for menu</small></div>
+  <div id="toast"></div>
+</div>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
