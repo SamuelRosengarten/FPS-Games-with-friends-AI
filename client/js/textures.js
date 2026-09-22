@@ -173,10 +173,10 @@ const RECIPES = {
     tc.each((u, v, i) => {
       const big = n.fbm(u, v, 4, 5);
       const grain = n.v(u * 200, v * 200, 200);
-      const peb = smooth(0.7, 0.76, n.v(u * 48, v * 48, 48));
+      const peb = smooth(0.74, 0.86, n.v(u * 48, v * 48, 48)) * 0.7;
       const t = clamp01(big * 1.2 - 0.1);
       const c = [mix(dark[0], base[0], t), mix(dark[1], base[1], t), mix(dark[2], base[2], t)];
-      const pc = [0.55, 0.52, 0.48];
+      const pc = [0.46, 0.42, 0.37];
       tc.set(i, [mix(c[0], pc[0], peb) + grain * 0.05, mix(c[1], pc[1], peb) + grain * 0.04, mix(c[2], pc[2], peb) + grain * 0.03], big * 0.5 + peb * 0.6 + grain * 0.2, 0.95 - peb * 0.2);
     });
   },
@@ -240,7 +240,7 @@ const RECIPES = {
       const noise = n.fbm(u, v, 8, 4);
       const fine = n.v(u * 256, v * 256, 256);
       const mortar = 1 - smooth(0.04, 0.12, b.edge);
-      const reds = [[0.55, 0.24, 0.17], [0.62, 0.3, 0.2], [0.48, 0.2, 0.15], [0.66, 0.36, 0.26]];
+      const reds = [[0.52, 0.29, 0.22], [0.58, 0.34, 0.26], [0.46, 0.26, 0.2], [0.62, 0.4, 0.31]];
       let c = reds[Math.floor(bh * 4)].map((x) => x * (0.85 + noise * 0.3 + fine * 0.08));
       const soot = smooth(0.6, 0.9, n.fbm(u, v * 0.5, 3, 4)) * 0.25;
       c = c.map((x) => x * (1 - soot));

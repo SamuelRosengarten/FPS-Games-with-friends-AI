@@ -44,7 +44,7 @@ export class WorldView {
     else if (ny === 0) k *= 0.75 + 0.25 * Math.min(1, y / 0.8);
     // interiors
     const sx = x + nx * 0.25, sz = z + nz * 0.25;
-    if (this.roofedAt(sx, sz, y - 0.01)) k *= ny < 0 ? 0.45 : 0.55;
+    if (this.roofedAt(sx, sz, y - 0.01)) k *= ny < 0 ? 0.55 : 0.66;
     if (ny < 0) k *= 0.8; // undersides
     return k;
   }
@@ -263,7 +263,7 @@ export class WorldView {
     const lampMat = this.tex.material('lamp');
     const geo = new THREE.BoxGeometry(1.1, 0.08, 0.35);
     for (const l of this.map.lights) {
-      const light = new THREE.PointLight(l.color, l.intensity * 1.6, l.distance * 1.2, 1.6);
+      const light = new THREE.PointLight(l.color, l.intensity * 2.2, l.distance * 1.35, 1.5);
       light.position.set(l.x, l.y - 0.15, l.z);
       this.group.add(light);
       this.lights.push(light);

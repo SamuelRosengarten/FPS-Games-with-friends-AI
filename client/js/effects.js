@@ -368,7 +368,7 @@ export class Effects {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = Math.pow(Math.random(), 0.6) * 3.6;
-      const h = Math.random() * 3.2;
+      const h = Math.pow(Math.random(), 1.4) * 3.2;
       const mat = new THREE.SpriteMaterial({ map: this.smokeTex, transparent: true, depthWrite: false, opacity: 0, color: new THREE.Color().setScalar(tint * (0.82 + Math.random() * 0.18)), rotation: Math.random() * 6.28 });
       const s = new THREE.Sprite(mat);
       s.userData.noAO = true;
@@ -392,7 +392,7 @@ export class Effects {
       for (const sp of sm.sprites) {
         const g = Math.min(1, Math.max(0, (age - sp.delay) / 1.6));
         const e = 1 - Math.pow(1 - g, 3);
-        sp.s.position.set(sm.p[0] + sp.off.x * (0.25 + 0.75 * e), sm.p[1] + 0.3 + sp.off.y * (0.3 + 0.7 * e), sm.p[2] + sp.off.z * (0.25 + 0.75 * e));
+        sp.s.position.set(sm.p[0] + sp.off.x * (0.25 + 0.75 * e), sm.p[1] + sp.off.y * (0.3 + 0.7 * e), sm.p[2] + sp.off.z * (0.25 + 0.75 * e));
         const s = sp.size * (0.3 + 0.7 * e);
         sp.s.scale.set(s, s, 1);
         sp.s.material.rotation += sp.spin * 0.016;

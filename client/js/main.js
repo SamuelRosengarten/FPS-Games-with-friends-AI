@@ -306,6 +306,7 @@ let last = performance.now();
 function loop(t) {
   const dt = Math.min(0.1, Math.max(0, (t - last) / 1000));
   last = t;
+  input.pollPad();
   if (state === 'game') {
     const menus = ui.anyMenuOpen() || chatOpen;
     const playing = !menus && (input.locked || input.lastDevice === 'pad');

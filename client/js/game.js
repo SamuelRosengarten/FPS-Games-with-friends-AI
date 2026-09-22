@@ -605,7 +605,6 @@ export class ClientGame {
     const now = performance.now();
     const serverNow = this.net.serverNow();
     const me = this.me;
-    this.input.pollPad();
 
     let look = { dx: 0, dy: 0 };
     const w = this.w;
