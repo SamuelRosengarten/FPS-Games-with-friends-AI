@@ -11,6 +11,6 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js --no-open",
-    "test": "node --test tests/"
+    "test": "node --test \"tests/*.test.js\""
   }
 }

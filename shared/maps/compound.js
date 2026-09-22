@@ -18,6 +18,7 @@ export default {
     raised: 'concrete', crate: 'crate', crate2: 'crateDark', low: 'sandbag', roof: 'concreteDark', destructible: 'woodPanel',
   },
   theme: {
+    sky: { turbidity: 7, rayleigh: 2.2, mie: 0.006, mieG: 0.8 },
     skyTop: 0x4b5f7a, skyHorizon: 0xb9c2c9, skyBottom: 0x6d6a62,
     fog: 0x9aa3aa, fogNear: 40, fogFar: 160,
     sun: { dir: [-0.5, 0.62, 0.35], color: 0xffe0c0, intensity: 2.2 },

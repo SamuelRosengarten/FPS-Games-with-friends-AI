@@ -17,6 +17,7 @@ export default {
     raised: 'stoneTiles', crate: 'crate', crate2: 'crateDark', low: 'sandbag', roof: 'wood', destructible: 'woodPanel',
   },
   theme: {
+    sky: { turbidity: 2.2, rayleigh: 1.1, mie: 0.0035, mieG: 0.86 },
     skyTop: 0x3b78c9, skyHorizon: 0xd8e4ec, skyBottom: 0xc9b28c,
     fog: 0xd6c8ad, fogNear: 55, fogFar: 190,
     sun: { dir: [0.42, 0.78, 0.46], color: 0xfff1da, intensity: 2.8 },
