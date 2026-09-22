@@ -5,16 +5,17 @@ import { createWeaponModel } from './models.js';
 import { WEAPONS } from '../shared/weapons.js';
 
 const HIP = {
-  pistol: [0.15, -0.165, -0.36],
-  smg: [0.165, -0.185, -0.4],
-  rifle: [0.17, -0.19, -0.42],
-  shotgun: [0.17, -0.19, -0.42],
-  sniper: [0.17, -0.19, -0.42],
-  knife: [0.2, -0.2, -0.36],
-  grenade: [0.19, -0.19, -0.36],
-  bomb: [0.08, -0.24, -0.4],
+  pistol: [0.145, -0.165, -0.44],
+  smg: [0.16, -0.18, -0.44],
+  rifle: [0.19, -0.2, -0.52],
+  shotgun: [0.19, -0.2, -0.52],
+  sniper: [0.19, -0.2, -0.52],
+  knife: [0.18, -0.19, -0.38],
+  grenade: [0.17, -0.18, -0.38],
+  bomb: [0.06, -0.23, -0.42],
 };
-const ADS_Z = { pistol: -0.34, smg: -0.3, rifle: -0.26, shotgun: -0.3, sniper: -0.26 };
+const BASE_YAW = { pistol: 0.05, smg: 0.1, rifle: 0.13, shotgun: 0.13, sniper: 0.12, knife: 0, grenade: 0, bomb: 0 };
+const ADS_Z = { pistol: -0.42, smg: -0.42, rifle: -0.46, shotgun: -0.44, sniper: -0.4 };
 
 const ease = (t) => t * t * (3 - 2 * t);
 const bell = (p, a = 0.14, b = 0.86) => (p < a ? ease(p / a) : p > b ? ease((1 - p) / (1 - b)) : 1);
@@ -107,40 +108,69 @@ export class ViewModel {
     const info = model.userData;
     const arms = new THREE.Group();
     arms.name = 'arms';
-    const sleeve = new THREE.MeshStandardMaterial({ color: look.uniform, roughness: 0.85 });
-    const glove = new THREE.MeshStandardMaterial({ color: look.gloves, roughness: 0.75 });
-    const cuff = new THREE.MeshStandardMaterial({ color: look.accent ?? 0x444444, roughness: 0.7 });
-    const addArm = (hand, shoulder, left) => {
-      const h = new THREE.Vector3(...hand), s = new THREE.Vector3(...shoulder);
-      const dir = h.clone().sub(s);
+    const sleeveCol = new THREE.Color(look.uniform).multiplyScalar(0.85);
+    const sleeve = new THREE.MeshStandardMaterial({ color: sleeveCol, roughness: 0.9 });
+    const sleeveDark = new THREE.MeshStandardMaterial({ color: sleeveCol.clone().multiplyScalar(0.75), roughness: 0.9 });
+    const glove = new THREE.MeshStandardMaterial({ color: look.gloves, roughness: 0.7 });
+    const knuckle = new THREE.MeshStandardMaterial({ color: new THREE.Color(look.gloves).multiplyScalar(1.6), roughness: 0.6 });
+    const accent = new THREE.MeshStandardMaterial({ color: look.accent ?? 0x444444, roughness: 0.7 });
+    const up = new THREE.Vector3(0, 1, 0);
+    const seg = (a, b, r0, r1, mat) => {
+      const dir = b.clone().sub(a);
       const len = dir.length();
-      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.036, len, 4, 10), sleeve);
-      arm.position.copy(s).addScaledVector(dir, 0.5);
-      arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-      arms.add(arm);
-      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.039, 0.039, 0.03, 12), cuff);
-      c.position.copy(h).addScaledVector(dir, -0.12 / len);
-      c.quaternion.copy(arm.quaternion);
-      arms.add(c);
-      const gl = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.09), glove);
-      gl.position.copy(h);
-      gl.quaternion.copy(arm.quaternion);
-      arms.add(gl);
-      // thumb/fingers hint
-      const f = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.05), glove);
-      f.position.copy(h).add(new THREE.Vector3(left ? 0.02 : -0.02, 0.02, -0.03));
-      arms.add(f);
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, len, 14, 1), mat);
+      m.position.copy(a).addScaledVector(dir, 0.5);
+      m.quaternion.setFromUnitVectors(up, dir.normalize());
+      arms.add(m);
+      const j = new THREE.Mesh(new THREE.SphereGeometry(r1 * 1.02, 12, 8), mat);
+      j.position.copy(b);
+      arms.add(j);
+      return m;
+    };
+    // hand: a glove block with a thumb and wrapped fingers, oriented along the forearm
+    const addHand = (wrist, palm, left) => {
+      const dir = palm.clone().sub(wrist).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
+      const hand = new THREE.Group();
+      hand.position.copy(palm);
+      hand.quaternion.copy(q);
+      hand.add(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.078, 0.062), glove));
+      const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.045, 0.026), knuckle);
+      fingers.position.set(0, 0.03, left ? 0.04 : -0.04);
+      hand.add(fingers);
+      const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.012, 0.035, 3, 8), glove);
+      thumb.position.set(left ? 0.03 : -0.03, 0.015, 0);
+      thumb.rotation.z = left ? -0.6 : 0.6;
+      hand.add(thumb);
+      arms.add(hand);
+    };
+    const addArm = (palm, elbow, shoulder, left) => {
+      const p = new THREE.Vector3(...palm), e = new THREE.Vector3(...elbow), sh = new THREE.Vector3(...shoulder);
+      const wrist = p.clone().add(e.clone().sub(p).normalize().multiplyScalar(0.07));
+      seg(e, wrist, 0.046, 0.036, sleeve);
+      seg(sh, e, 0.058, 0.048, sleeveDark);
+      // cuff
+      const cuffPos = wrist.clone().add(e.clone().sub(wrist).normalize().multiplyScalar(0.03));
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.041, 0.041, 0.035, 14), accent);
+      cuff.position.copy(cuffPos);
+      cuff.quaternion.setFromUnitVectors(up, wrist.clone().sub(e).normalize());
+      arms.add(cuff);
+      addHand(wrist, p, left);
     };
     const grip = info.grip || [0, 0, 0];
     const fore = info.fore || [grip[0] - 0.02, grip[1], grip[2] - 0.2];
+    const g = grip;
     if (info.kind === 'knife' || info.kind === 'grenade') {
-      addArm([grip[0] + 0.005, grip[1] - 0.01, grip[2] + 0.03], [grip[0] + 0.12, grip[1] - 0.32, grip[2] + 0.42], false);
+      addArm([g[0], g[1] - 0.01, g[2] + 0.02], [g[0] + 0.06, g[1] - 0.2, g[2] + 0.28], [g[0] + 0.2, g[1] - 0.45, g[2] + 0.55], false);
     } else if (info.kind === 'bomb') {
-      addArm([0.09, -0.02, 0.02], [0.18, -0.35, 0.4], false);
-      addArm([-0.09, -0.02, 0.02], [-0.2, -0.35, 0.4], true);
+      addArm([0.1, -0.01, 0.02], [0.16, -0.2, 0.3], [0.3, -0.45, 0.55], false);
+      addArm([-0.1, -0.01, 0.02], [-0.18, -0.2, 0.3], [-0.32, -0.45, 0.55], true);
+    } else if (info.kind === 'pistol') {
+      addArm([g[0] + 0.005, g[1] - 0.035, g[2] + 0.025], [g[0] + 0.07, g[1] - 0.2, g[2] + 0.3], [g[0] + 0.22, g[1] - 0.45, g[2] + 0.55], false);
+      addArm([g[0] - 0.028, g[1] - 0.045, g[2] + 0.005], [g[0] - 0.15, g[1] - 0.2, g[2] + 0.28], [g[0] - 0.32, g[1] - 0.45, g[2] + 0.5], true);
     } else {
-      addArm([grip[0] + 0.01, grip[1] - 0.03, grip[2] + 0.03], [grip[0] + 0.1, grip[1] - 0.32, grip[2] + 0.42], false);
-      addArm([fore[0] - 0.01, fore[1] - 0.035, fore[2]], [fore[0] - 0.24, fore[1] - 0.3, fore[2] + 0.46], true);
+      addArm([g[0] + 0.005, g[1] - 0.035, g[2] + 0.025], [g[0] + 0.08, g[1] - 0.21, g[2] + 0.3], [g[0] + 0.24, g[1] - 0.45, g[2] + 0.55], false);
+      addArm([fore[0] - 0.01, fore[1] - 0.04, fore[2]], [fore[0] - 0.2, fore[1] - 0.24, fore[2] + 0.3], [fore[0] - 0.42, fore[1] - 0.5, fore[2] + 0.6], true);
     }
     arms.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
     model.add(arms);
@@ -277,7 +307,7 @@ export class ViewModel {
     let py = hip[1] + (adsPos[1] - hip[1]) * ads + by + breathe - this.landDip + this.sway.y * 0.25 * (1 - ads * 0.7);
     let pz = hip[2] + (adsPos[2] - hip[2]) * ads + this.kick * (1 - ads * 0.4);
     let rx = this.kickRot * 0.09 + this.sway.y * 0.6 * (1 - ads * 0.6);
-    let ry = this.sway.x * 1.0 * (1 - ads * 0.6);
+    let ry = this.sway.x * 1.0 * (1 - ads * 0.6) + (BASE_YAW[kind] || 0) * (1 - ads);
     let rz = this.sway.x * 0.6 - (st.crouch || 0) * 0.04 * (1 - ads) + bx * 1.2;
 
     // deploy
@@ -371,6 +401,9 @@ export class ViewModel {
       this.slideT = Math.min(1, this.slideT + dt / 0.08);
       if (slide) slide.position.z = (slide.userData.baseZ ?? (slide.userData.baseZ = slide.position.z)) + Math.sin(this.slideT * Math.PI) * 0.025;
     }
+
+    const stock = this.current.getObjectByName('stock');
+    if (stock) stock.visible = ads < 0.55;
 
     this.holder.position.set(px, py, pz);
     this.holder.rotation.set(rx, ry, rz);

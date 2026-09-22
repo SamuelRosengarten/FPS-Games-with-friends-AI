@@ -105,6 +105,7 @@ net.on('match', async (m) => {
   const queued = pending;
   pending = null;
   for (const q of queued) game.handle(q);
+  net.send({ t: 'loaded' });
   ui.overlay('overlay-loading', false);
   if (state === 'loading') state = 'game';
   lastEnd = null;

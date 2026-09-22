@@ -93,6 +93,8 @@ test('lobby, host controls, match start and snapshots over websocket', async () 
   a.send({ t: 'host', action: 'start' });
   const match = await b.wait((m) => m.t === 'match');
   assert.equal(match.map, 'arena');
+  a.send({ t: 'loaded' });
+  b.send({ t: 'loaded' });
   const tp = await b.wait((m) => m.t === 'tp');
   const snap = await b.wait((m) => m.t === 's' && m.p.length >= 3);
   assert.ok(snap.p.every((p) => Array.isArray(p) && p.length === 11));

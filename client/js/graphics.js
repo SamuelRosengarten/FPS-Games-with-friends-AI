@@ -9,15 +9,86 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
-import { Sky } from 'three/addons/objects/Sky.js';
-import { makeCloudTexture } from './textures.js';
 
 export const PRESETS = {
-  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false, bloom: false, aa: 'none', msaa: 0, env: 0.55, particles: 0.5 },
-  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false, bloom: false, aa: 'fxaa', msaa: 0, env: 0.6, particles: 0.75 },
-  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false, bloom: true,  aa: 'smaa', msaa: 0, env: 0.65, particles: 1 },
-  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: true,  bloom: true,  aa: 'msaa', msaa: 4, env: 0.7, particles: 1 },
+  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false, bloom: false, aa: 'none', msaa: 0, env: 0.5, particles: 0.5 },
+  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false, bloom: false, aa: 'fxaa', msaa: 0, env: 0.45, particles: 0.75 },
+  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false, bloom: true,  aa: 'smaa', msaa: 0, env: 0.45, particles: 1 },
+  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: true,  bloom: true,  aa: 'msaa', msaa: 4, env: 0.5, particles: 1 },
 };
+
+const SKY_VS = /* glsl */`
+  varying vec3 vDir;
+  void main() {
+    vDir = position;
+    vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_Position = p;
+  }
+`;
+const SKY_FS = /* glsl */`
+  uniform vec3 uTop, uHorizon, uBottom, uSunDir, uSunColor, uCloudColor;
+  uniform float uCloudCover, uTime, uIntensity, uSunSize;
+  varying vec3 vDir;
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float noise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
+  float fbm(vec2 p) {
+    float s = 0.0, a = 0.5;
+    for (int i = 0; i < 6; i++) { s += a * noise(p); p = p * 2.03 + 17.1; a *= 0.5; }
+    return s;
+  }
+  void main() {
+    vec3 d = normalize(vDir);
+    float h = d.y;
+    vec3 col = h > 0.0 ? mix(uHorizon, uTop, pow(h, 0.45)) : mix(uHorizon, uBottom, pow(min(1.0, -h * 4.0), 0.6));
+    float sd = max(dot(d, uSunDir), 0.0);
+    col += uSunColor * (pow(sd, 5.0) * 0.18 + pow(sd, 48.0) * 0.5);
+    if (h > 0.0) {
+      vec2 uv = d.xz / (h + 0.12) * 1.3 + vec2(uTime * 0.006, uTime * 0.002);
+      float n = fbm(uv);
+      float c = smoothstep(1.0 - uCloudCover, 1.0 - uCloudCover + 0.32, n);
+      c *= smoothstep(0.0, 0.22, h);
+      float n2 = fbm(uv + uSunDir.xz * 0.12);
+      float shade = clamp((n - n2) * 3.0 + 0.75, 0.45, 1.15);
+      vec3 cc = uCloudColor * shade * (0.9 + 0.5 * pow(sd, 6.0));
+      col = mix(col, cc, c * 0.92);
+    }
+    col += uSunColor * smoothstep(1.0 - uSunSize, 1.0 - uSunSize * 0.55, sd) * 14.0;
+    gl_FragColor = vec4(col * uIntensity, 1.0);
+  }
+`;
+
+function makeSky(theme, radius) {
+  const lin = (hex) => new THREE.Color(hex);
+  const sd = new THREE.Vector3(...theme.sun.dir).normalize();
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTop: { value: lin(theme.skyTop) },
+      uHorizon: { value: lin(theme.skyHorizon) },
+      uBottom: { value: lin(theme.skyBottom) },
+      uSunDir: { value: sd },
+      uSunColor: { value: lin(theme.sun.color).multiplyScalar(1.0) },
+      uCloudColor: { value: lin(theme.cloudColor ?? 0xffffff) },
+      uCloudCover: { value: theme.cloudCover ?? 0.4 },
+      uTime: { value: 0 },
+      uIntensity: { value: theme.skyIntensity ?? 1.0 },
+      uSunSize: { value: 0.0009 },
+    },
+    vertexShader: SKY_VS,
+    fragmentShader: SKY_FS,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 24), mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = -10;
+  mesh.userData.noAO = true;
+  return mesh;
+}
 
 // Hide sprites / transparent effects from the AO g-buffer.
 GTAOPass.prototype._overrideVisibility = function () {
@@ -214,64 +285,32 @@ export class Graphics {
   setupEnvironment(map) {
     const th = map.theme;
     const scene = this.scene;
-    if (this.sky) { scene.remove(this.sky); this.sky.material.dispose(); }
-    if (this.clouds) { scene.remove(this.clouds); }
+    if (this.sky) { scene.remove(this.sky); this.sky.material.dispose(); this.sky.geometry.dispose(); }
     if (this.envTex) { this.envTex.dispose(); this.envTex = null; }
 
     const sd = new THREE.Vector3(...th.sun.dir).normalize();
-    // sky
-    const sky = new Sky();
-    sky.scale.setScalar(2800);
-    const u = sky.material.uniforms;
-    const skyCfg = th.sky || {};
-    u.turbidity.value = skyCfg.turbidity ?? 6;
-    u.rayleigh.value = skyCfg.rayleigh ?? 1.6;
-    u.mieCoefficient.value = skyCfg.mie ?? 0.005;
-    u.mieDirectionalG.value = skyCfg.mieG ?? 0.8;
-    u.sunPosition.value.copy(sd);
-    sky.userData.noAO = true;
-    sky.frustumCulled = false;
+    const sky = makeSky(th, 2500);
     this.sky = sky;
     scene.add(sky);
 
     // environment map from the sky (image based lighting + reflections)
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const envScene = new THREE.Scene();
-    const envSky = new Sky();
-    envSky.scale.setScalar(100);
-    Object.assign(envSky.material.uniforms.turbidity, { value: u.turbidity.value });
-    envSky.material.uniforms.rayleigh.value = u.rayleigh.value;
-    envSky.material.uniforms.mieCoefficient.value = u.mieCoefficient.value;
-    envSky.material.uniforms.mieDirectionalG.value = u.mieDirectionalG.value;
-    envSky.material.uniforms.sunPosition.value.copy(sd);
+    const envSky = makeSky({ ...th, cloudCover: (th.cloudCover ?? 0.4) * 0.6 }, 100);
     envScene.add(envSky);
-    // a ground disc so the lower hemisphere isn't black
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 24), new THREE.MeshBasicMaterial({ color: th.hemi.ground }));
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(80, 24), new THREE.MeshBasicMaterial({ color: th.hemi.ground }));
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -2;
+    ground.position.y = -3;
     envScene.add(ground);
-    const envRT = pmrem.fromScene(envScene, 0.02);
+    const envRT = pmrem.fromScene(envScene, 0.03);
     this.envTex = envRT.texture;
     scene.environment = this.envTex;
     scene.environmentIntensity = this.preset.env * (th.envIntensity ?? 1);
     this.vmScene.environment = this.envTex;
-    this.vmScene.environmentIntensity = 0.7;
+    this.vmScene.environmentIntensity = 0.6;
     pmrem.dispose();
     envSky.material.dispose();
-
-    // clouds
-    if (!this.cloudTex) this.cloudTex = makeCloudTexture(512);
-    const clouds = new THREE.Mesh(
-      new THREE.PlaneGeometry(3000, 3000),
-      new THREE.MeshBasicMaterial({ map: this.cloudTex, transparent: true, depthWrite: false, fog: false, opacity: th.cloudOpacity ?? 0.8, color: th.cloudColor ?? 0xffffff }),
-    );
-    clouds.material.map.repeat.set(5, 5);
-    clouds.rotation.x = Math.PI / 2;
-    clouds.position.y = 220;
-    clouds.renderOrder = -1;
-    clouds.userData.noAO = true;
-    this.clouds = clouds;
-    scene.add(clouds);
+    envSky.geometry.dispose();
 
     // lights
     const b = map.bounds;
@@ -290,7 +329,7 @@ export class Graphics {
     this.sun.shadow.radius = 2;
     this.hemi.color.set(th.hemi.sky);
     this.hemi.groundColor.set(th.hemi.ground);
-    this.hemi.intensity = th.hemi.intensity * 0.55;
+    this.hemi.intensity = th.hemi.intensity * 0.4;
     scene.fog = new THREE.Fog(th.fog, th.fogNear, th.fogFar);
     scene.background = new THREE.Color(th.fog);
     this.renderer.toneMappingExposure = th.exposure ?? 1;
@@ -304,15 +343,18 @@ export class Graphics {
 
   // indoor = 0..1 how much the player is under a roof (dims the viewmodel lighting)
   setViewmodelLight(indoor) {
-    const k = 1 - indoor * 0.55;
-    this.vmHemi.intensity = (this.themeHemi || 1) * 1.1 * k;
-    this.vmSun.intensity = (this.themeSun || 2.5) * 0.75 * (1 - indoor * 0.8);
+    const k = 1 - indoor * 0.5;
+    this.vmHemi.intensity = (this.themeHemi || 1) * 0.75 * k;
+    this.vmSun.intensity = (this.themeSun || 2.5) * 0.45 * (1 - indoor * 0.8);
   }
 
   // ---------------------------------------------------------------- frame
   render(dt) {
     this.updateDynamicRes(dt);
-    if (this.clouds) this.clouds.material.map.offset.x += dt * 0.002;
+    if (this.sky) {
+      this.sky.material.uniforms.uTime.value += dt;
+      this.sky.position.copy(this.camera.position);
+    }
     this.composer.render(dt);
   }
 

@@ -62,6 +62,25 @@ test('defuse match with bots plays to completion with plants, kills and halftime
   for (const p of g.players.values()) assert.ok(p.money >= 0 && p.money <= 16000);
 });
 
+test('match waits for players to load the map (with a timeout)', () => {
+  const { g } = setup({ map: 'arena', mode: 'tdm', fillBots: 1 });
+  const conn = fakeConn();
+  g.onConnection(conn);
+  conn.emit('message', JSON.stringify({ t: 'hello', v: 1, name: 'Slow' }));
+  const p = [...g.players.values()].find((x) => x.name === 'Slow');
+  g.handleTeam(p, TEAM.ATT);
+  g.startMatch();
+  assert.equal(g.match.phase, 'loading');
+  g.run(5);
+  assert.equal(g.match.phase, 'loading');
+  g.match.onLoaded(p);
+  assert.equal(g.match.phase, 'freeze');
+  // a second match with a player that never loads starts after the timeout
+  g.startMatch();
+  g.run(21);
+  assert.notEqual(g.match.phase, 'loading');
+});
+
 test('bomb can be planted by a human and explodes when not defused', () => {
   const { g, events } = setup({ map: 'sandstone', mode: 'defuse', fillBots: 0, freezeTime: 2, bombTime: 20 });
   const conn = fakeConn();
@@ -71,6 +90,7 @@ test('bomb can be planted by a human and explodes when not defused', () => {
   g.handleTeam(p, TEAM.ATT);
   const def = g.addBot(TEAM.DEF);
   g.startMatch();
+  g.match.onLoaded(p);
   const m = g.match;
   assert.ok(p.inv.bomb, 'only attacker carries the bomb');
   // keep the defender bot out of the way
@@ -100,6 +120,7 @@ test('defenders can defuse a planted bomb', () => {
   const d = [...g.players.values()].find((x) => x.name === 'Defuser');
   g.handleTeam(d, TEAM.DEF);
   g.startMatch();
+  g.match.onLoaded(d);
   const m = g.match;
   att.brain.update = () => ({ fwd: 0, right: 0, yaw: 0 });
   g.run(2.5);
@@ -126,6 +147,7 @@ test('buying respects money, buy zone and gear rules', () => {
   const p = [...g.players.values()].find((x) => x.name === 'Buyer');
   g.handleTeam(p, TEAM.DEF);
   g.startMatch();
+  g.match.onLoaded(p);
   const m = g.match;
   assert.equal(p.money, 800);
   m.onBuy(p, 'ar');

@@ -411,7 +411,7 @@ export class Effects {
       T.t += dt;
       const speed = 420;
       const head = Math.min(T.len, T.t * speed);
-      const tailD = Math.max(0, head - 4.5);
+      const tailD = Math.max(0, T.t * speed - 4.5);
       if (tailD >= T.len - 0.01) { T.active = false; T.m.visible = false; continue; }
       const l = head - tailD;
       T.m.position.copy(T.s).addScaledVector(T.d, (head + tailD) / 2);

@@ -61,8 +61,29 @@ export class Match {
 
   // ------------------------------------------------------------------ lifecycle
 
+  // Wait (max 20 s) until every connected player has loaded the map, then begin.
   start() {
     for (const p of this.players.values()) this.resetPlayerForMatch(p);
+    this.phase = 'loading';
+    this.loaded = new Set();
+    this.loadDeadline = this.now + 20000;
+    this.checkLoaded();
+  }
+
+  onLoaded(p) {
+    if (this.phase !== 'loading') return;
+    this.loaded.add(p.id);
+    this.checkLoaded();
+  }
+
+  checkLoaded() {
+    if (this.phase !== 'loading') return;
+    const humans = [...this.players.values()].filter((p) => p.conn && this.inMatch(p));
+    if (this.now < this.loadDeadline && humans.some((p) => !this.loaded.has(p.id))) return;
+    this.begin();
+  }
+
+  begin() {
     if (this.modeInfo.rounds) {
       this.startRound();
     } else {
@@ -396,6 +417,7 @@ export class Match {
     this.tickCount++;
 
     // phase transitions
+    if (this.phase === 'loading') { this.checkLoaded(); return; }
     if (this.phase === 'freeze' && now >= this.phaseEnd) {
       this.phase = 'live';
       this.phaseEnd = this.modeInfo.rounds ? now + this.settings.roundTime * 1000 : this.endsAt;

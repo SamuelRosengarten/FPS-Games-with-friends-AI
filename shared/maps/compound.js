@@ -18,10 +18,11 @@ export default {
     raised: 'concrete', crate: 'crate', crate2: 'crateDark', low: 'sandbag', roof: 'concreteDark', destructible: 'woodPanel',
   },
   theme: {
+    cloudCover: 0.62, cloudColor: 0xdfe4ea,
     sky: { turbidity: 7, rayleigh: 2.2, mie: 0.006, mieG: 0.8 },
     skyTop: 0x4b5f7a, skyHorizon: 0xb9c2c9, skyBottom: 0x6d6a62,
-    fog: 0x9aa3aa, fogNear: 40, fogFar: 160,
-    sun: { dir: [-0.5, 0.62, 0.35], color: 0xffe0c0, intensity: 2.2 },
+    fog: 0xa3abb3, fogNear: 60, fogFar: 240,
+    sun: { dir: [-0.5, 0.62, 0.35], color: 0xffe2c4, intensity: 2.8 },
     hemi: { sky: 0xc4d2e6, ground: 0x5f5a50, intensity: 1.15 },
     exposure: 1.05,
     ambientSound: 'industrial',

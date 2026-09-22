@@ -4,7 +4,6 @@
   "description": "Breachpoint - a self-hosted multiplayer tactical FPS for you and your friends. Runs in the browser on Mac (Apple Silicon) and Windows.",
   "type": "module",
   "private": true,
-  "license": "MIT",
   "engines": {
     "node": ">=18.17"
   },

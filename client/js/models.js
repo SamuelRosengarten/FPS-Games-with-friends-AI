@@ -35,10 +35,57 @@ function cyl(r, len, material, x = 0, y = 0, z = 0, axis = 'z', seg = 14, r2 = r
   return m;
 }
 
+// Merge unnamed sibling meshes that share a material into one mesh (fewer draw calls).
+const _v = new THREE.Vector3();
+const _n = new THREE.Vector3();
+export function mergeStatic(group) {
+  for (const child of [...group.children]) if (!child.isMesh && child.children.length) mergeStatic(child);
+  const buckets = new Map();
+  for (const c of group.children) {
+    if (!c.isMesh || c.name || c.children.length || !c.geometry.attributes.normal) continue;
+    const key = c.material.uuid;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(c);
+  }
+  for (const meshes of buckets.values()) {
+    if (meshes.length < 2) continue;
+    const pos = [], nor = [], uv = [], idx = [];
+    for (const m of meshes) {
+      m.updateMatrix();
+      const nm = new THREE.Matrix3().getNormalMatrix(m.matrix);
+      const g = m.geometry;
+      const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv;
+      const base = pos.length / 3;
+      for (let i = 0; i < P.count; i++) {
+        _v.fromBufferAttribute(P, i).applyMatrix4(m.matrix);
+        _n.fromBufferAttribute(N, i).applyMatrix3(nm).normalize();
+        pos.push(_v.x, _v.y, _v.z);
+        nor.push(_n.x, _n.y, _n.z);
+        if (U) uv.push(U.getX(i), U.getY(i)); else uv.push(0, 0);
+      }
+      if (g.index) for (let i = 0; i < g.index.count; i++) idx.push(base + g.index.getX(i));
+      else for (let i = 0; i < P.count; i++) idx.push(base + i);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeBoundingSphere();
+    const merged = new THREE.Mesh(geo, meshes[0].material);
+    merged.castShadow = meshes[0].castShadow;
+    merged.receiveShadow = meshes[0].receiveShadow;
+    for (const m of meshes) { group.remove(m); m.geometry.dispose(); }
+    group.add(merged);
+  }
+  return group;
+}
+
 // ------------------------------------------------------------------ weapons
 // Convention: barrel points to -Z, origin at the firing hand grip, +Y up. Metres.
 
 function finish(g, info) {
+  mergeStatic(g);
   g.userData = { ...info };
   g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return g;
@@ -48,26 +95,43 @@ function buildPistol(o) {
   const g = new THREE.Group();
   const L = o.len;
   const body = M.color(o.body, 0.6, 0.35);
-  const slide = box(0.032, 0.036, L, body, 0, 0.055, -L / 2 + 0.035);
+  const frameMat = M.color(o.accent, 0.25, 0.6);
+  const W = o.big ? 0.036 : 0.03;
+  // slide with chamfered top, serrations and ejection port
+  const slide = new THREE.Group();
   slide.name = 'slide';
+  slide.add(box(W, 0.03, L, body, 0, 0.05, -L / 2 + 0.035));
+  slide.add(box(W * 0.78, 0.01, L * 0.98, body, 0, 0.069, -L / 2 + 0.035));
+  for (let i = 0; i < 5; i++) {
+    slide.add(box(W + 0.002, 0.022, 0.003, M.gunmetal(), 0, 0.05, 0.02 - i * 0.008));
+  }
+  slide.add(box(W * 0.5, 0.004, 0.035, M.polymer(), 0.0, 0.0745, -0.045));
+  slide.add(box(0.006, 0.008, 0.008, M.polymer(), 0, 0.077, -L + 0.045));   // front sight
+  slide.add(box(0.006, 0.009, 0.007, M.polymer(), 0.0065, 0.077, 0.016));
+  slide.add(box(0.006, 0.009, 0.007, M.polymer(), -0.0065, 0.077, 0.016));
   g.add(slide);
-  g.add(box(0.03, 0.028, L * 0.82, M.color(o.accent, 0.3, 0.6), 0, 0.024, -L * 0.41 + 0.03));
-  // grip
-  const grip = box(0.03, o.big ? 0.12 : 0.11, 0.05, M.polymer(), 0, -0.03, 0.02);
+  g.add(cyl(0.007, 0.018, M.steel(), 0, 0.052, -L + 0.027));                  // barrel crown
+  // frame, rail, trigger
+  g.add(box(W * 0.95, 0.024, L * 0.78, frameMat, 0, 0.024, -L * 0.39 + 0.035));
+  g.add(box(W * 0.8, 0.008, L * 0.3, frameMat, 0, 0.009, -L * 0.62));
+  const grip = box(W * 0.95, o.big ? 0.12 : 0.105, 0.048, M.polymer(), 0, -0.035, 0.022);
   grip.rotation.x = 0.22;
   g.add(grip);
-  // trigger guard
-  g.add(box(0.008, 0.008, 0.05, M.polymer(), 0, -0.005, -0.03));
-  g.add(box(0.008, 0.03, 0.008, M.polymer(), 0, 0.005, -0.056));
-  g.add(cyl(0.008, 0.02, M.gunmetal(), 0, 0.058, -L + 0.028));
-  // sights
-  g.add(box(0.006, 0.008, 0.008, M.polymer(), 0, 0.077, -L + 0.045));
-  g.add(box(0.018, 0.008, 0.006, M.polymer(), 0, 0.077, 0.015));
-  const mag = box(0.024, 0.02, 0.036, M.gunmetal(), 0, -0.085, 0.033);
-  mag.rotation.x = 0.22;
+  const texture = box(W + 0.002, 0.05, 0.03, M.rubber(), 0, -0.035, 0.022);
+  texture.rotation.x = 0.22;
+  g.add(texture);
+  g.add(box(W * 0.9, 0.012, 0.02, M.polymer(), 0, 0.012, 0.035)); // beavertail
+  g.add(box(0.006, 0.006, 0.048, M.polymer(), 0, -0.006, -0.03));  // trigger guard bottom
+  g.add(box(0.006, 0.026, 0.006, M.polymer(), 0, 0.004, -0.054));  // guard front
+  const trig = box(0.004, 0.018, 0.004, M.steel(), 0, 0.004, -0.022);
+  trig.rotation.x = 0.3;
+  g.add(trig);
+  const mag = new THREE.Group();
+  mag.add(box(W * 0.8, 0.02, 0.038, M.gunmetal(), 0, -0.085, 0.034));
+  mag.children[0].rotation.x = 0.22;
   mag.name = 'mag';
   g.add(mag);
-  return finish(g, { muzzle: [0, 0.058, -L + 0.02], eject: [0.02, 0.066, -0.02], sightY: 0.078, fore: [-0.012, -0.03, 0.02], grip: [0, -0.02, 0.02], kind: 'pistol' });
+  return finish(g, { muzzle: [0, 0.052, -L + 0.018], eject: [0.02, 0.066, -0.04], sightY: 0.081, fore: [-0.012, -0.03, 0.02], grip: [0, -0.02, 0.02], kind: 'pistol' });
 }
 
 function buildSMG(o) {
@@ -84,13 +148,17 @@ function buildSMG(o) {
   mag.name = 'mag';
   g.add(mag);
   // stock
-  g.add(box(0.012, 0.012, 0.18, M.gunmetal(), 0.015, 0.06, 0.12));
-  g.add(box(0.012, 0.012, 0.18, M.gunmetal(), -0.015, 0.06, 0.12));
-  g.add(box(0.04, 0.07, 0.015, M.polymer(), 0, 0.045, 0.21));
+  const stock = new THREE.Group();
+  stock.name = 'stock';
+  stock.add(box(0.012, 0.012, 0.18, M.gunmetal(), 0.015, 0.06, 0.12));
+  stock.add(box(0.012, 0.012, 0.18, M.gunmetal(), -0.015, 0.06, 0.12));
+  stock.add(box(0.04, 0.07, 0.015, M.polymer(), 0, 0.045, 0.21));
+  g.add(stock);
   // sights / rail
   g.add(box(0.03, 0.01, L * 0.4, M.gunmetal(), 0, 0.08, -L * 0.2));
-  g.add(box(0.008, 0.018, 0.01, M.gunmetal(), 0, 0.093, -L * 0.42));
-  g.add(box(0.02, 0.016, 0.01, M.gunmetal(), 0, 0.093, 0.02));
+  g.add(box(0.005, 0.016, 0.008, M.gunmetal(), 0, 0.092, -L * 0.42));
+  g.add(box(0.007, 0.016, 0.01, M.gunmetal(), 0.0075, 0.093, 0.02));
+  g.add(box(0.007, 0.016, 0.01, M.gunmetal(), -0.0075, 0.093, 0.02));
   g.add(box(0.03, 0.035, 0.05, M.color(o.accent, 0.3, 0.6), 0, 0.01, -L * 0.42));
   return finish(g, { muzzle: [0, 0.052, -L * 0.87], eject: [0.025, 0.06, -0.08], sightY: 0.1, fore: [0, 0.0, -L * 0.42], grip: [0, -0.02, 0.015], kind: 'smg' });
 }
@@ -108,21 +176,38 @@ function buildRifle(o) {
   g.add(box(0.056, 0.06, 0.26, furniture, 0, 0.048, -0.43));
   if (!ak) g.add(box(0.03, 0.012, 0.26, M.gunmetal(), 0, 0.082, -0.43));
   g.add(cyl(0.017, 0.06, M.gunmetal(), 0, 0.055, -0.74));
-  // front sight
-  g.add(box(0.006, 0.04, 0.012, M.gunmetal(), 0, 0.085, -0.66));
+  // front sight / gas block
+  g.add(box(0.005, 0.04, 0.01, M.gunmetal(), 0, 0.08, -0.66));
+  g.add(box(0.024, 0.03, 0.03, M.gunmetal(), 0, 0.062, -0.66));
+  // muzzle device with ports
+  g.add(cyl(0.015, 0.05, M.gunmetal(), 0, 0.055, -0.775));
+  for (let i = 0; i < 3; i++) g.add(box(0.032, 0.006, 0.004, M.polymer(), 0, 0.055, -0.76 - i * 0.012));
+  // receiver details: ejection port, charging handle, magwell, trigger guard
+  g.add(box(0.052, 0.018, 0.06, M.polymer(), 0.001, 0.058, -0.06));
+  g.add(box(0.012, 0.012, 0.03, M.steel(), 0.032, 0.066, ak ? -0.05 : 0.07));
+  g.add(box(0.044, 0.04, 0.07, body, 0, 0.0, -0.12));
+  g.add(box(0.008, 0.008, 0.07, M.gunmetal(), 0, -0.012, -0.03));
+  const trig = box(0.005, 0.02, 0.005, M.steel(), 0, 0.0, -0.04);
+  trig.rotation.x = 0.3;
+  g.add(trig);
+  if (m4 || o.style === 'marauder') for (let i = 0; i < 9; i++) g.add(box(0.034, 0.006, 0.012, M.gunmetal(), 0, 0.09, -0.32 - i * 0.026));
+  if (ak) { g.add(box(0.058, 0.01, 0.2, M.wood(), 0, 0.083, -0.45)); g.add(cyl(0.012, 0.25, M.gunmetal(), 0, 0.09, -0.3)); }
   // grip
   const grip = box(0.03, 0.11, 0.045, ak ? M.wood() : M.polymer(), 0, -0.035, 0.03);
   grip.rotation.x = 0.28;
   g.add(grip);
-  // stock
+  // stock (hidden in first person while aiming)
+  const stock = new THREE.Group();
+  stock.name = 'stock';
   if (ak) {
-    const st = box(0.045, 0.07, 0.26, M.wood(), 0, 0.03, 0.2);
-    st.rotation.x = 0.08;
-    g.add(st);
+    const st = box(0.045, 0.07, 0.26, M.wood(), 0, 0.012, 0.2);
+    st.rotation.x = 0.12;
+    stock.add(st);
   } else {
-    g.add(cyl(0.017, 0.2, M.polymer(), 0, 0.05, 0.16));
-    g.add(box(0.05, 0.09, 0.1, M.polymer(), 0, 0.035, 0.25));
+    stock.add(cyl(0.017, 0.2, M.polymer(), 0, 0.045, 0.16));
+    stock.add(box(0.05, 0.085, 0.1, M.polymer(), 0, 0.02, 0.25));
   }
+  g.add(stock);
   // magazine
   const mag = new THREE.Group();
   if (ak) {
@@ -142,17 +227,24 @@ function buildRifle(o) {
   if (m4 || o.style === 'marauder') {
     g.add(box(0.03, 0.012, 0.3, M.gunmetal(), 0, 0.085, -0.12));
     const optic = new THREE.Group();
-    optic.add(box(0.034, 0.028, 0.07, M.polymer(), 0, 0.105, -0.06));
-    const lens = box(0.026, 0.02, 0.004, M.glass(), 0, 0.108, -0.096);
+    // hollow red-dot: base, two side plates, top plate, see-through lens, emissive dot
+    optic.add(box(0.034, 0.008, 0.07, M.polymer(), 0, 0.089, -0.06));
+    optic.add(box(0.005, 0.03, 0.07, M.polymer(), 0.0145, 0.106, -0.06));
+    optic.add(box(0.005, 0.03, 0.07, M.polymer(), -0.0145, 0.106, -0.06));
+    optic.add(box(0.034, 0.005, 0.07, M.polymer(), 0, 0.1225, -0.06));
+    const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.024, 0.026), mat('lens-glass', { color: 0x88ccaa, metalness: 0.2, roughness: 0.05, transparent: true, opacity: 0.18, depthWrite: false }));
+    lens.position.set(0, 0.106, -0.094);
     optic.add(lens);
-    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0016, 8, 6), M.red());
-    dot.position.set(0, 0.108, -0.03);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0011, 8, 6), M.red());
+    dot.position.set(0, 0.108, -0.093);
     dot.name = 'reddot';
     optic.add(dot);
     g.add(optic);
     return finish(g, { muzzle: [0, 0.055, -0.78], eject: [0.03, 0.06, -0.08], sightY: 0.108, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
   }
-  g.add(box(0.03, 0.02, 0.05, M.gunmetal(), 0, 0.09, -0.04));
+  g.add(box(0.03, 0.008, 0.04, M.gunmetal(), 0, 0.084, -0.04));
+  g.add(box(0.008, 0.016, 0.01, M.gunmetal(), 0.01, 0.094, -0.04));
+  g.add(box(0.008, 0.016, 0.01, M.gunmetal(), -0.01, 0.094, -0.04));
   return finish(g, { muzzle: [0, 0.055, -0.78], eject: [0.03, 0.06, -0.08], sightY: 0.1, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
 }
 
@@ -169,6 +261,7 @@ function buildShotgun(o) {
   g.add(grip);
   const st = box(0.045, 0.08, 0.28, M.wood(), 0, 0.02, 0.24);
   st.rotation.x = 0.12;
+  st.name = 'stock';
   g.add(st);
   g.add(box(0.008, 0.012, 0.01, M.steel(), 0, 0.078, -0.71));
   return finish(g, { muzzle: [0, 0.062, -0.74], eject: [0.03, 0.05, -0.05], sightY: 0.085, fore: [0, 0.01, -0.4], grip: [0, -0.02, 0.05], kind: 'shotgun', pump: true });
@@ -183,9 +276,11 @@ function buildSniper(o) {
   if (heavy) g.add(cyl(0.022, 0.07, M.gunmetal(), 0, 0.055, -0.88));
   // chassis / stock
   g.add(box(0.058, 0.07, 0.4, body, 0, 0.025, -0.3));
-  const st = box(0.05, 0.1, 0.32, body, 0, 0.02, 0.24);
-  g.add(st);
-  g.add(box(0.05, 0.03, 0.2, body, 0, 0.08, 0.26));
+  const stock = new THREE.Group();
+  stock.name = 'stock';
+  stock.add(box(0.05, 0.1, 0.32, body, 0, 0.02, 0.24));
+  stock.add(box(0.05, 0.03, 0.2, body, 0, 0.08, 0.26));
+  g.add(stock);
   const grip = box(0.03, 0.1, 0.045, body, 0, -0.035, 0.04);
   grip.rotation.x = 0.3;
   g.add(grip);
@@ -362,6 +457,7 @@ export class PlayerModel {
     const backpack = box(0.3, 0.3, 0.1, M.color(0x2b2b28, 0, 0.8), 0, 0.3, 0.18);
     spine.add(backpack);
     const bomb = box(0.26, 0.12, 0.16, M.color(0x5a5245, 0.2, 0.7), 0, 0.2, 0.26);
+    bomb.name = 'bombback';
     bomb.visible = false;
     spine.add(bomb);
 
@@ -414,6 +510,7 @@ export class PlayerModel {
     weaponMount.position.set(0.12, -0.14, -0.42);
     aim.add(weaponMount);
 
+    mergeStatic(root);
     root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 
     this.root = root;

@@ -1,0 +1,67 @@
+// Developer model viewer: /dev/?view=vm&w=ar  |  /dev/?view=players  |  /dev/?view=weapons
+import * as THREE from 'three';
+import { Graphics } from '../js/graphics.js';
+import { ViewModel } from '../js/viewmodel.js';
+import { PlayerModel, teamLook, createWeaponModel } from '../js/models.js';
+import { loadSettings } from '../js/settings.js';
+import { getMap } from '../shared/maps/index.js';
+import { WEAPONS } from '../shared/weapons.js';
+
+const q = new URLSearchParams(location.search);
+const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false };
+const g = new Graphics(document.getElementById('wrap'), settings);
+const map = getMap(q.get('map') || 'sandstone');
+g.setupEnvironment(map);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0xb09878, roughness: 0.9 }));
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+g.scene.add(floor);
+const wall = new THREE.Mesh(new THREE.BoxGeometry(12, 4, 0.5), new THREE.MeshStandardMaterial({ color: 0xc8a878, roughness: 0.9 }));
+wall.position.set(0, 2, -6);
+wall.castShadow = wall.receiveShadow = true;
+g.scene.add(wall);
+const view = q.get('view') || 'vm';
+const label = document.getElementById('label');
+let vm;
+if (view === 'vm') {
+  vm = new ViewModel(g);
+  vm.setLook(teamLook(+(q.get('team') || 1), 1, false));
+  vm.setWeapon(q.get('w') || 'ar', 0.01);
+  vm.deployT = 1;
+  g.camera.position.set(0, 1.68, 2);
+  label.textContent = `viewmodel: ${q.get('w') || 'ar'}${q.get('ads') ? ' (ADS)' : ''}`;
+} else if (view === 'players') {
+  const specs = [[1, 0, 0], [2, 0, 0], [1, 1, 0], [2, 0, 1], [1, 0, -1]];
+  specs.forEach(([team, crouch, lean], i) => {
+    const m = new PlayerModel(teamLook(team, i, false), `Player${i}`, true);
+    m.setWeapon(['ar', 'm4', 'awp', 'smg', 'deagle'][i]);
+    m.update({ x: (i - 2) * 1.4, y: 0, z: 0, yaw: Math.PI + (i - 2) * 0.35, pitch: 0, crouch, lean, speed: 0, onGround: true }, 0.016);
+    g.scene.add(m.root);
+  });
+  g.camera.position.set(0, 1.5, 5.5);
+  g.camera.lookAt(0, 1, 0);
+  label.textContent = 'player models';
+} else {
+  const ids = Object.keys(WEAPONS);
+  ids.forEach((id, i) => {
+    const m = createWeaponModel(id);
+    m.position.set((i % 5 - 2) * 0.55, 1.2 + Math.floor(i / 5) * -0.35 + 0.4, 0);
+    m.rotation.y = Math.PI / 2;
+    g.scene.add(m);
+  });
+  g.camera.position.set(0, 1.1, 2.4);
+  g.camera.lookAt(0, 1.0, 0);
+  label.textContent = 'weapons';
+}
+g.setFov(settings.fov);
+let t = 0;
+function loop() {
+  const dt = 1 / 60;
+  t += dt;
+  if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1 });
+  g.render(dt);
+  requestAnimationFrame(loop);
+}
+loop();
+window.__ready = true;
+window.__vm = vm; window.__g = g;

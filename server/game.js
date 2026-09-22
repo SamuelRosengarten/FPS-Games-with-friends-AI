@@ -112,6 +112,7 @@ export class Game {
       case 'drop': m?.onDrop(p); break;
       case 'throw': m?.onThrow(p, msg); break;
       case 'use': m?.onUse(p, !!msg.on); break;
+      case 'loaded': m?.onLoaded(p); break;
       default: break;
     }
   }

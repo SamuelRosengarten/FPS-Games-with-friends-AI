@@ -53,9 +53,12 @@ export class ClientGame {
       this.tex.quality = this.g.quality;
     }
     const mats = [...new Set(this.map.boxes.map((b) => b.mat)), 'woodPanel', 'lamp'];
+    const t0 = performance.now();
     await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}… ${Math.round(f * 100)}%`; });
+    const t1 = performance.now();
     this.g.setupEnvironment(this.map);
     this.worldView = new WorldView(this.g, this.tex, this.map);
+    console.info(`[breachpoint] textures ${Math.round(t1 - t0)} ms, world ${Math.round(performance.now() - t1)} ms (${mats.length} materials, ${this.g.quality})`);
     this.effects = new Effects(this.g);
     this.viewmodel = this.viewmodel || new ViewModel(this.g);
     this.viewmodel.setVisible(true);
@@ -966,9 +969,9 @@ export class ClientGame {
   // ------------------------------------------------------------------ death / spectate
   updateDead(dt, now, playing) {
     const inp = this.input;
-    if (!this.modeInfo.rounds || now - this.deadAt < 2500) { this.specId = null; return; }
-    if (this.me.team === TEAM.NONE || !this.modeInfo.rounds) return;
-    const mates = [...this.players.values()].filter((p) => p.alive && p.state && (this.ffa || p.team === this.me.team || this.me.team === TEAM.NONE));
+    const spectator = this.me.team === TEAM.NONE;
+    if (!spectator && (!this.modeInfo.rounds || now - this.deadAt < 2500)) { this.specId = null; return; }
+    const mates = [...this.players.values()].filter((p) => p.alive && p.state && (spectator || this.ffa || p.team === this.me.team));
     if (!mates.length) { this.specId = null; return; }
     let idx = mates.findIndex((p) => p.id === this.specId);
     if (idx < 0) idx = 0;
