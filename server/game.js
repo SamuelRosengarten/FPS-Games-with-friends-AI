@@ -292,7 +292,7 @@ export class Game {
     num('fillBots', 0, 8);
     num('startMoney', 0, 16000);
     if (typeof s.friendlyFire === 'boolean') next.friendlyFire = s.friendlyFire;
-    if (['easy', 'normal', 'hard'].includes(s.botDifficulty)) next.botDifficulty = s.botDifficulty;
+    if (['easy', 'normal', 'hard', 'expert'].includes(s.botDifficulty)) next.botDifficulty = s.botDifficulty;
     const modeChanged = next.mode !== cur.mode;
     this.settings = next;
     if (modeChanged) {

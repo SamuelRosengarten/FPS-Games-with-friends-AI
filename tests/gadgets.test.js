@@ -148,8 +148,8 @@ test('damage report on death and tagging slow-down', () => {
   g.startMatch();
   g.match.onLoaded(v);
   const m = g.match;
-  g.run(4.5);
   a.brain.update = still;
+  g.run(4.5);
   Object.assign(a, { x: 0, y: 0.01, z: 50, yaw: 0, pitch: 0, crouch: 0, lean: 0, spawnProtectUntil: 0 });
   Object.assign(v, { x: 0, y: 0.01, z: 40, yaw: Math.PI, pitch: 0, crouch: 0, lean: 0, spawnProtectUntil: 0, armor: 0, helmet: false });
   a.hist = []; v.hist = [];

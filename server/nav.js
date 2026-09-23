@@ -93,6 +93,12 @@ export class NavGraph {
         }
       }
     }
+    // prefer the middle of corridors: nodes next to walls/edges cost a bit more to walk through
+    for (const n of this.nodes) {
+      const walk = n.edges.filter((e) => e.type === 'walk').length;
+      n.pen = Math.max(0, 8 - walk) * 0.1;
+    }
+    for (const n of this.nodes) for (const e of n.edges) e.cost += this.nodes[e.to].pen;
     this.gScore = new Float64Array(this.nodes.length);
     this.from = new Int32Array(this.nodes.length);
     this.stampArr = new Uint32Array(this.nodes.length);

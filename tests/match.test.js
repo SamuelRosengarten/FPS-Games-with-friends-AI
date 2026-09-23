@@ -179,8 +179,8 @@ test('damage model: headshots, armor and wall penetration', () => {
   const b = g.addBot(TEAM.DEF);
   g.startMatch();
   const m = g.match;
-  g.run(4.5);
   for (const p of [a, b]) p.brain.update = () => ({ fwd: 0, right: 0, yaw: 0 });
+  g.run(4.5);
   // place them in the open yard facing each other
   Object.assign(a, { x: 0, y: 0.01, z: 50, yaw: 0, pitch: 0, crouch: 0, lean: 0, spawnProtectUntil: 0 });
   Object.assign(b, { x: 0, y: 0.01, z: 40, yaw: Math.PI, pitch: 0, crouch: 0, lean: 0, spawnProtectUntil: 0, armor: 0, helmet: false });
