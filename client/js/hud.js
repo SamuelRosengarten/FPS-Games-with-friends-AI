@@ -291,28 +291,62 @@ export class Radar {
       }
     }
     // obstacles from boxes (crates, props, panels, sills)
-    for (const b of m.boxes) {
-      if (b.kind === 'ground' || b.kind === 'roof' || b.kind === 'lintel' || b.kind === 'wall' || b.kind === 'floor' || b.renderOnly) continue;
-      g.fillStyle = b.kind === 'panel' ? '#8a6a44' : b.kind === 'sill' ? '#5d6773' : '#2a3038';
-      g.fillRect((b.min[0] - m.x0) * ppm, (b.min[2] - m.z0) * ppm, (b.max[0] - b.min[0]) * ppm, (b.max[2] - b.min[2]) * ppm);
-    }
+    const obstacles = (g, upper) => {
+      for (const b of m.boxes) {
+        if (b.kind === 'ground' || b.kind === 'roof' || b.kind === 'lintel' || b.kind === 'wall' || b.kind === 'floor' || b.kind === 'slab' || b.renderOnly) continue;
+        if (!!upper !== !!(b.floorY && b.min[1] >= b.floorY - 0.01)) continue;
+        g.fillStyle = b.kind === 'panel' ? '#8a6a44' : b.kind === 'sill' ? '#5d6773' : b.kind === 'stair' ? '#6a7480' : '#2a3038';
+        g.fillRect((b.min[0] - m.x0) * ppm, (b.min[2] - m.z0) * ppm, (b.max[0] - b.min[0]) * ppm, (b.max[2] - b.min[2]) * ppm);
+      }
+    };
+    obstacles(g, false);
     // outline walls
     g.strokeStyle = 'rgba(255,255,255,0.08)';
     g.lineWidth = 1;
+    // second storey: the ground floor dimmed underneath, upper floor cells on top
+    if (m.upper) {
+      const u = document.createElement('canvas');
+      u.width = W; u.height = H;
+      const ug = u.getContext('2d');
+      ug.fillStyle = '#1a1f26';
+      ug.fillRect(0, 0, W, H);
+      ug.globalAlpha = 0.35;
+      ug.drawImage(c, 0, 0);
+      ug.globalAlpha = 1;
+      for (let r = 0; r < m.rows; r++) {
+        for (let col = 0; col < m.cols; col++) {
+          const ch = m.upper.grid[r][col];
+          if (ch === ' ') continue;
+          ug.fillStyle = ch === '#' ? '#1a1f26' : ch === '=' ? '#3a424c' : '#56606c';
+          ug.fillRect(col * cs, r * cs, cs + 0.5, cs + 0.5);
+        }
+      }
+      obstacles(ug, true);
+      this.upperImage = u;
+      this.upperCtx = ug;
+    }
     // sites
     for (const site of ['A', 'B']) {
       const z = m.zones[site];
       if (!z) continue;
-      const x = (z.min[0] - m.x0) * ppm, y = (z.min[2] - m.z0) * ppm, w = (z.max[0] - z.min[0]) * ppm, h = (z.max[2] - z.min[2]) * ppm;
-      g.fillStyle = 'rgba(220, 60, 50, 0.18)';
-      g.fillRect(x, y, w, h);
-      g.fillStyle = 'rgba(255, 90, 80, 0.9)';
-      g.font = `bold ${Math.round(cs * 1.6)}px Arial`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText(site, x + w / 2, y + h / 2);
+      if (z.floor > 0 && this.upperCtx) { this.drawSite(this.upperCtx, site, z, cs); this.drawSite(g, site, z, cs, true); continue; }
+      if (this.upperCtx) this.drawSite(this.upperCtx, site, z, cs, true);
+      this.drawSite(g, site, z, cs);
     }
     this.image = c;
+  }
+
+  // other = the site is on another floor than this image (drawn faintly)
+  drawSite(g, site, z, cs, other = false) {
+    const m = this.map, ppm = this.ppm;
+    const x = (z.min[0] - m.x0) * ppm, y = (z.min[2] - m.z0) * ppm, w = (z.max[0] - z.min[0]) * ppm, h = (z.max[2] - z.min[2]) * ppm;
+    g.fillStyle = other ? 'rgba(220, 60, 50, 0.07)' : 'rgba(220, 60, 50, 0.18)';
+    g.fillRect(x, y, w, h);
+    g.fillStyle = other ? 'rgba(255, 90, 80, 0.35)' : 'rgba(255, 90, 80, 0.9)';
+    g.font = `bold ${Math.round(cs * 1.6)}px Arial`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(other ? site + (z.floor > 0 ? '↑' : '↓') : site, x + w / 2, y + h / 2);
   }
 
   // players: [{ x, z, yaw, color, self, enemy, dead }], bomb: {x,z,planted}
@@ -329,7 +363,8 @@ export class Radar {
     g.rotate(me.yaw);
     const s = zoom / this.ppm;
     g.globalAlpha = 0.9;
-    g.drawImage(this.image, (m.x0 - me.x) * zoom, (m.z0 - me.z) * zoom, this.image.width * s, this.image.height * s);
+    const upstairs = this.upperImage && me.y != null && me.y > m.upper.floorY - 0.8;
+    g.drawImage(upstairs ? this.upperImage : this.image, (m.x0 - me.x) * zoom, (m.z0 - me.z) * zoom, this.image.width * s, this.image.height * s);
     g.globalAlpha = 1;
     const toR = (x, z) => [(x - me.x) * zoom, (z - me.z) * zoom];
     if (bomb) {
@@ -340,6 +375,8 @@ export class Radar {
     for (const p of players) {
       if (p.self) continue;
       const [px, pz] = toR(p.x, p.z);
+      // players on the other floor are drawn faded
+      g.globalAlpha = m.upper && p.y != null && (p.y > m.upper.floorY - 0.8) !== !!upstairs ? 0.4 : 1;
       if (p.dead) {
         g.strokeStyle = p.color;
         g.lineWidth = 2;

@@ -344,12 +344,12 @@ export class UI {
     const items = [
       ['h', 'KEYBOARD & MOUSE'],
       ['Move', `${k('forward')} ${k('left')} ${k('back')} ${k('right')}`], ['Jump', k('jump')], ['Crouch', k('crouch')], ['Walk (quiet)', k('walk')],
-      ['Fire', k('fire')], ['Aim down sights / scope', k('ads')], ['Reload', k('reload')], ['Use · plant · defuse · pick up', k('use')],
+      ['Fire', k('fire')], ['Aim down sights / scope', k('ads')], ['Reload', k('reload')], ['Use · plant · defuse · pick up · reinforce (hold)', k('use')],
       ['Lean left / right', `${k('leanL')} / ${k('leanR')}`], ['Weapons', '1 2 3 4 5 · wheel'], ['Last weapon', k('lastWeapon')], ['Drop weapon', k('drop')],
       ['Buy menu', k('buy')], ['Scoreboard', k('scoreboard')], ['Chat all / team', `${k('chat')} / ${k('teamChat')}`], ['Inspect weapon', k('inspect')], ['Menu', 'Esc'],
       ['h', 'CONTROLLER (Xbox / PlayStation)'],
       ['Move / look', 'Left stick / right stick'], ['Fire / aim', 'RT / LT  (R2 / L2)'], ['Jump', 'A  (✕)'], ['Crouch', 'B  (○)'],
-      ['Reload · hold to use/plant/defuse', 'X  (□)'], ['Next weapon', 'Y  (△)'], ['Lean left / right', 'LB / RB  (L1 / R1)'], ['Knife', 'R3'], ['Walk toggle', 'L3'],
+      ['Reload · hold to use/plant/defuse/reinforce', 'X  (□)'], ['Next weapon', 'Y  (△)'], ['Lean left / right', 'LB / RB  (L1 / R1)'], ['Knife', 'R3'], ['Walk toggle', 'L3'],
       ['Buy menu', 'D-pad up'], ['Drop weapon', 'D-pad down'], ['Grenades', 'D-pad left'], ['Last weapon', 'D-pad right'], ['Scoreboard', 'View / Share'], ['Menu', 'Menu / Options'],
     ];
     $('controls-grid').innerHTML = items.map(([a, b]) => (a === 'h' ? `<h4>${b}</h4>` : `<div class="ci"><span>${a}</span><b>${esc(b)}</b></div>`)).join('');

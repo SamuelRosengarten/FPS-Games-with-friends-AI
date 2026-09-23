@@ -5,14 +5,21 @@ One friend runs the server, everyone else plays in the browser. Works on **MacBo
 with **keyboard & mouse or a controller**.
 
 - **4 game modes**: Defuse (round-based bomb plant/defuse with economy), Team Deathmatch, Free For All, Gun Game
-- **3 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls), *Arena* (compact deathmatch)
-- **11 guns + knife + frag/flash/smoke grenades**, learnable recoil patterns, movement/jump inaccuracy, aim-down-sights, sniper scopes
-- **R6-style breakable wooden walls** you can shoot or blow holes through, wall-banging, leaning (Q/E)
+- **4 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls),
+  *Embassy* (two floors: atrium, balcony, inside and outside staircases), *Arena* (compact deathmatch)
+- **11 guns + knife + frag/flash/smoke grenades + breach charges**, learnable recoil patterns, movement/jump inaccuracy,
+  aim-down-sights, sniper scopes, tagging (getting hit slows you down)
+- **R6-style destruction**: breakable wooden walls you can shoot or blow holes through, wall-banging, leaning (Q/E);
+  Defenders **reinforce walls** with steel (bullet- and grenade-proof), Attackers blow them open with **breach charges**
 - **CS-style economy**: buy menu, kill rewards, loss bonus, armor & helmet, defuse kits, dropped weapons you can pick up
-- **Bots** with 3 difficulty levels that buy, plant, defuse, rotate, throw grenades and fill empty slots
-- **Lag-compensated hit detection**, spectating, killfeed, scoreboard, radar, chat
+- **Bots** with 3 difficulty levels that buy, plant, defuse, rotate, throw frags/pop-flashes/smokes, reinforce walls,
+  use breach charges and fill empty slots
+- **Lag-compensated hit detection**, spectating, killfeed, damage given/taken report, scoreboard, two-floor radar, chat,
+  3D audio with sounds muffled behind walls
 - **High-end graphics** (Ultra preset for M-series Pro/Max and RTX GPUs): 4K shadow maps, ambient occlusion (GTAO), bloom,
-  4× MSAA, physically based materials, sky lighting, and a dynamic-resolution system that keeps you **above 60 FPS**
+  4× MSAA, physically based materials, sky lighting, per-map colour grading, detailed map dressing (windows, palms, wires,
+  graffiti, puddles…), shell casings, blood splatter, fireballs, dust motes, and a dynamic-resolution system with automatic
+  effect fallbacks that keeps you **above 60 FPS**
 - 100% procedural: textures, models and sounds are generated in code — no downloads besides this repo
 
 ---
@@ -87,7 +94,7 @@ Tools like [playit.gg](https://playit.gg), [ngrok](https://ngrok.com) (`ngrok ht
 | Jump / crouch | Space / Ctrl or C | A (✕) / B (○) |
 | Walk quietly (no footsteps) | Shift | L3 (toggle) |
 | Reload | R | X (□) — **hold X** to plant / defuse / pick up |
-| Use: plant, defuse, pick up weapon | F | hold X (□) |
+| Use: plant, defuse, pick up weapon, reinforce wall (Defenders, hold) | F | hold X (□) |
 | Lean left / right | Q / E | LB / RB (L1 / R1) |
 | Weapons | 1 primary, 2 pistol, 3 knife, 4 grenades, 5 bomb, mouse wheel | Y next weapon, R3 knife, D-pad ← grenades, D-pad → last weapon |
 | Last weapon | X | D-pad → |
@@ -124,10 +131,12 @@ from the lobby. Players can join a match that is already running.
 | Rifles | Marauder, Striker AR (one-tap headshots), Guardian M4 (red dot, easier recoil) |
 | Snipers | Kestrel (light, fast), Longbow (one shot to the body) |
 | Gear | Kevlar, Kevlar + Helmet, Defuse kit (Defenders) |
-| Grenades | Frag, Flashbang, Smoke |
+| Grenades | Frag, Flashbang, Smoke, Breach charge (Attackers in Defuse: sticks to walls and blows reinforced walls open) |
 
 Tips: sprays follow a fixed pattern (pull down and slightly sideways to control it), shooting while running or jumping is very
-inaccurate — stop (or counter-strafe) before you shoot. Walking (Shift) makes you silent. Wooden walls can be shot through.
+inaccurate — stop (or counter-strafe) before you shoot. Walking (Shift) makes you silent. Wooden walls can be shot through —
+unless a Defender reinforced them (each Defender can reinforce 2 wall sections per round, also during buy time: look at a
+wooden wall and hold **F**). Only a breach charge opens a reinforced wall.
 
 ---
 
@@ -140,7 +149,9 @@ Open **Settings → Video**:
 - **Dynamic resolution** (on by default) lowers the render resolution for a moment if the frame rate drops below 60 FPS
   and restores it when there's headroom, so the game stays smooth. You can cap it with *Max render scale*.
 - Friends on older laptops can pick **High**, **Medium** or **Low**.
-- Turn on **Show FPS counter** to see FPS, preset, resolution and ping.
+- If your GPU still can't hold 60 FPS at the lowest resolution, the game switches off the most expensive effects one by one
+  (ambient occlusion, bloom, MSAA, shadow resolution) and tells you in the FPS line.
+- Turn on **Show FPS counter** to see FPS, preset, resolution, draw calls, CPU time and ping.
 
 Browser tips: use an up-to-date **Chrome, Edge or Safari** with hardware acceleration enabled. On a 120 Hz ProMotion
 MacBook, Chrome renders at 120 FPS. Use fullscreen (pause menu → *Toggle fullscreen*) for the best experience.
@@ -189,5 +200,7 @@ npm run dev       # start the server without opening a browser
 - `client/` — the browser game: renderer & post-processing (`graphics.js`), procedural textures, world, models, viewmodel,
   effects, synthesized audio, input (keyboard/mouse/gamepad), HUD and menus. `client/dev/` is a small model viewer.
 - Maps are ASCII-style grids carved with a few helper calls — see `shared/maps/sandstone.js`, and `node tools/print-map.js` to preview.
+  A map can add a second floor (`upper` grid) and staircases (`stairs`) — see `shared/maps/embassy.js`. Cosmetic dressing is
+  configured per map in `decor` and generated by `client/js/decor.js`.
 
 Three.js (MIT) is vendored in `client/vendor/three` so the game works offline on a LAN.

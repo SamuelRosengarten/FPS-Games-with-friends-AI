@@ -12,6 +12,12 @@
 //   =  low cover (1 m)
 //   1-8 raised floor, n * 0.5 m high
 // Roofs are given separately as cell rectangles so crates etc. can be placed under them.
+//
+// Optional second storey (def.upper): a grid of the same size carved with
+//   ' ' no floor (air / stair well)   .  floor slab   #  wall   x  window   D  doorway
+//   w  breakable panel   c/C crates   =  parapet / low wall
+// plus def.stairs: [{ r, c, dir: 'n'|'s'|'e'|'w', len, to }] (solid stepped flights, bottom cell first)
+// Zones may carry a 5th element 'upper' to restrict them to the second storey.
 
 import { hash2 } from '../constants.js';
 
@@ -70,6 +76,22 @@ export function buildMap(def) {
   for (let r = 0; r < rows; r++) roofed.push(new Array(cols).fill(false));
   for (const [r0, c0, r1, c1] of g.roofs)
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (g.inside(r, c)) roofed[r][c] = true;
+
+  // second storey
+  const U = def.upper || null;
+  let ug = null;
+  const upperRoofed = [];
+  if (U) {
+    ug = new Grid(rows, cols, ' ');
+    U.carve(ug);
+    for (let r = 0; r < rows; r++) upperRoofed.push(new Array(cols).fill(false));
+    for (const [r0, c0, r1, c1] of ug.roofs)
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (ug.inside(r, c)) upperRoofed[r][c] = true;
+    // the ground floor is indoors wherever there is a slab or an upper roof above it
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      if (ug.get(r, c) !== ' ' || upperRoofed[r][c]) roofed[r][c] = true;
+    }
+  }
 
   const openAround = (r, c) => {
     for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
@@ -162,8 +184,12 @@ export function buildMap(def) {
     add(cellMinX(c0), 0, cellMinZ(r0), cellMinX(c1 + 1), 0.012, cellMinZ(r1 + 1), mats.floor2, { kind: 'decal', renderOnly: true });
   });
 
-  // Roofs over open cells
-  greedy((r, c) => (roofed[r][c] && isOpenChar(g.get(r, c)) ? 'R' : null), (k, r0, c0, r1, c1) => {
+  // Roofs over open cells (explicit ground-floor roofs only; a second storey provides its own slab)
+  const lowerRoof = [];
+  for (let r = 0; r < rows; r++) lowerRoof.push(new Array(cols).fill(false));
+  for (const [r0, c0, r1, c1] of g.roofs)
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (g.inside(r, c) && (!ug || ug.get(r, c) === ' ')) lowerRoof[r][c] = true;
+  greedy((r, c) => (lowerRoof[r][c] && isOpenChar(g.get(r, c)) ? 'R' : null), (k, r0, c0, r1, c1) => {
     add(cellMinX(c0), roofH, cellMinZ(r0), cellMinX(c1 + 1), roofTop, cellMinZ(r1 + 1), mats.roof, { kind: 'roof' });
   });
 
@@ -219,6 +245,102 @@ export function buildMap(def) {
     }
   }
 
+  if (U) {
+    const fy = U.floorY ?? roofH + 0.3;
+    const slab = U.slab ?? 0.3;
+    const uwh = U.wallHeight ?? 3.4;
+    const top = fy + uwh;
+    const umats = { wall: mats.building, floor: mats.floor2, slab: mats.roof, low: mats.low, ...(U.mats || {}) };
+    const UWALL = new Set(['#']);
+    const uSolid = new Set(['#', 'w', 'x', 'D']);
+    // slab under every non-air upper cell
+    greedy((r, c) => (ug.get(r, c) !== ' ' ? 'S' : null), (k, r0, c0, r1, c1) => {
+      add(cellMinX(c0), fy - slab, cellMinZ(r0), cellMinX(c1 + 1), fy, cellMinZ(r1 + 1), umats.slab, { kind: 'slab', floorY: fy });
+    });
+    // floor finish (render only) on walkable upper cells
+    greedy((r, c) => ('.cC=,'.includes(ug.get(r, c)) ? 'F' : null), (k, r0, c0, r1, c1) => {
+      add(cellMinX(c0), fy, cellMinZ(r0), cellMinX(c1 + 1), fy + 0.012, cellMinZ(r1 + 1), umats.floor, { kind: 'decal', renderOnly: true, floorY: fy });
+    });
+    // upper walls
+    greedy((r, c) => (UWALL.has(ug.get(r, c)) ? 'W' : null), (k, r0, c0, r1, c1) => {
+      add(cellMinX(c0), fy, cellMinZ(r0), cellMinX(c1 + 1), top, cellMinZ(r1 + 1), umats.wall, { kind: 'wall', floorY: fy, upper: true });
+    });
+    // parapets
+    greedy((r, c) => (ug.get(r, c) === '=' ? '=' : null), (k, r0, c0, r1, c1) => {
+      add(cellMinX(c0) + 0.2, fy, cellMinZ(r0) + 0.2, cellMinX(c1 + 1) - 0.2, fy + 1.05, cellMinZ(r1 + 1) - 0.2, umats.wall, { kind: 'cover', floorY: fy });
+    });
+    // upper roofs
+    for (const [r0, c0, r1, c1] of ug.roofs) {
+      add(cellMinX(c0), fy + (U.roofHeight ?? uwh - 0.35), cellMinZ(r0), cellMinX(c1 + 1), top, cellMinZ(r1 + 1), umats.roof || mats.roof, { kind: 'roof', floorY: fy });
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const ch = ug.get(r, c);
+        const mx = cellMinX(c), mz = cellMinZ(r);
+        const cx = mx + cs / 2, cz = mz + cs / 2;
+        const t = upperRoofed[r][c] ? fy + (U.roofHeight ?? uwh - 0.35) : top;
+        if (ch === 'D') {
+          if (t > fy + doorH) add(mx, fy + doorH, mz, mx + cs, t, mz + cs, umats.wall, { kind: 'lintel', floorY: fy });
+        } else if (ch === 'x') {
+          add(mx, fy, mz, mx + cs, fy + 1.0, mz + cs, umats.wall, { kind: 'sill', floorY: fy });
+          if (t > fy + 2.1) add(mx, fy + 2.1, mz, mx + cs, t, mz + cs, umats.wall, { kind: 'lintel', floorY: fy });
+        } else if (ch === 'c' || ch === 'C') {
+          const inset = 0.08 + hash2(r * 5, c * 9) * 0.1;
+          add(mx + inset, fy, mz + inset, mx + cs - inset, fy + 1.0, mz + cs - inset, mats.crate, { kind: 'crate', floorY: fy });
+          if (ch === 'C') add(mx + inset + 0.15, fy + 1.0, mz + inset + 0.15, mx + cs - inset - 0.15, fy + 2.0, mz + cs - inset - 0.15, mats.crate, { kind: 'crate', floorY: fy });
+        } else if (ch === 'w') {
+          const alongX = uSolid.has(ug.get(r, c - 1)) && uSolid.has(ug.get(r, c + 1));
+          const th = 0.1;
+          const panelTop = Math.min(3, t - fy);
+          const nCols = Math.round(cs), rowsN = Math.round(panelTop);
+          const bw = cs / nCols, bh = panelTop / rowsN;
+          for (let i = 0; i < nCols; i++) {
+            for (let j = 0; j < rowsN; j++) {
+              const extra = { kind: 'panel', destructible: true, hp: DESTRUCTIBLE_HP, group: rows * cols + r * cols + c, floorY: fy };
+              const b = alongX
+                ? add(mx + i * bw, fy + j * bh, cz - th, mx + (i + 1) * bw, fy + (j + 1) * bh, cz + th, mats.destructible, extra)
+                : add(cx - th, fy + j * bh, mz + i * bw, cx + th, fy + (j + 1) * bh, mz + (i + 1) * bw, mats.destructible, { ...extra });
+              destructibles.push(b.id);
+            }
+          }
+          if (t > fy + panelTop + 0.01) {
+            if (alongX) add(mx, fy + panelTop, cz - 0.3, mx + cs, t, cz + 0.3, umats.wall, { kind: 'lintel', floorY: fy });
+            else add(cx - 0.3, fy + panelTop, mz, cx + 0.3, t, mz + cs, umats.wall, { kind: 'lintel', floorY: fy });
+          }
+        }
+      }
+    }
+  }
+
+  // Stairs: solid flights of 0.5 m treads from the floor (or `from`) up to `to`, bottom cell first.
+  for (const st of def.stairs || []) {
+    const len = st.len ?? 4;
+    const from = st.from ?? 0;
+    const to = st.to ?? (U ? (U.floorY ?? roofH + 0.3) : 1.5);
+    const run = len * cs;
+    const n = Math.max(2, Math.round(run / 0.5));
+    const rise = (to - from) / n;
+    const d = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] }[st.dir];
+    const width = st.width ?? 1;
+    // bottom-cell origin corner and extents
+    const r0 = st.r, c0 = st.c;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * run, b2 = ((i + 1) / n) * run;
+      const h = from + rise * (i + 1);
+      let minx, maxx, minz, maxz;
+      if (d[0] === 0) {
+        minx = cellMinX(c0); maxx = cellMinX(c0 + width);
+        if (d[1] < 0) { const zb = cellMinZ(r0 + 1); minz = zb - b2; maxz = zb - a; }
+        else { const zt = cellMinZ(r0); minz = zt + a; maxz = zt + b2; }
+      } else {
+        minz = cellMinZ(r0); maxz = cellMinZ(r0 + width);
+        if (d[0] > 0) { const xl = cellMinX(c0); minx = xl + a; maxx = xl + b2; }
+        else { const xr = cellMinX(c0 + 1); minx = xr - b2; maxx = xr - a; }
+      }
+      add(minx, from, minz, maxx, h, maxz, st.mat || mats.raised, { kind: 'stair' });
+    }
+  }
+
   // Props in cell coordinates: { r, c, rows, cols, h, y, mat, inset }
   for (const p of def.props || []) {
     const inset = p.inset ?? 0.1;
@@ -237,9 +359,11 @@ export function buildMap(def) {
     return ch === '.' || ch === ',' || (ch >= '1' && ch <= '8') || ch === 'D';
   };
 
-  const rectToZone = ([r0, c0, r1, c1]) => ({
-    min: [cellMinX(Math.min(c0, c1)), -1, cellMinZ(Math.min(r0, r1))],
-    max: [cellMinX(Math.max(c0, c1) + 1), 6, cellMinZ(Math.max(r0, r1) + 1)],
+  const upperY = U ? (U.floorY ?? roofH + 0.3) : null;
+  const rectToZone = ([r0, c0, r1, c1, level]) => ({
+    min: [cellMinX(Math.min(c0, c1)), level === 'upper' ? upperY - 0.4 : -1, cellMinZ(Math.min(r0, r1))],
+    max: [cellMinX(Math.max(c0, c1) + 1), level === 'upper' ? upperY + 3 : U ? upperY - 0.6 : 6, cellMinZ(Math.max(r0, r1) + 1)],
+    floor: level === 'upper' ? upperY : 0,
   });
 
   const zones = {};
@@ -272,9 +396,18 @@ export function buildMap(def) {
     else if (ok) spawns.ffa.push([cellMinX(c) + cs / 2, floorAt(r, c), cellMinZ(r) + cs / 2, hash2(c, r) * Math.PI * 2]);
   }
 
+  if (ug) {
+    for (let r = 1; r < rows - 1; r++) for (let c = 1; c < cols - 1; c++) {
+      if (ug.get(r, c) !== '.') continue;
+      let ok = true;
+      for (let dr = -1; dr <= 1 && ok; dr++) for (let dc = -1; dc <= 1; dc++) if (ug.get(r + dr, c + dc) !== '.') { ok = false; break; }
+      if (ok) spawns.ffa.push([cellMinX(c) + cs / 2, upperY, cellMinZ(r) + cs / 2, hash2(r * 3, c) * Math.PI * 2]);
+    }
+  }
+
   const lights = (def.lights || []).map((l) => ({
     x: l.x ?? cellMinX(l.c) + cs / 2,
-    y: l.y ?? roofH - 0.25,
+    y: l.y ?? (l.level === 'upper' && U ? upperY + (U.roofHeight ?? (U.wallHeight ?? 3.4) - 0.35) - 0.25 : roofH - 0.25),
     z: l.z ?? cellMinZ(l.r) + cs / 2,
     color: l.color ?? 0xffe2b0,
     intensity: l.intensity ?? 6,
@@ -294,6 +427,7 @@ export function buildMap(def) {
     x0, z0,
     grid: g.cells.map((row) => row.join('')),
     roofed,
+    upper: U ? { floorY: upperY, roofHeight: U.roofHeight ?? (U.wallHeight ?? 3.4) - 0.35, grid: ug.cells.map((row) => row.join('')), roofed: upperRoofed } : null,
     bounds: { minX: x0, minZ: z0, maxX: x0 + cols * cs, maxZ: z0 + rows * cs },
     boxes,
     destructibles,

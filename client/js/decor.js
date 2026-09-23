@@ -283,8 +283,11 @@ export class Decor {
     const capMat = this.tex.material(this.cfg.trim || this.map.mats.building || 'concrete');
     const caps = new Batch();
     const plinths = new Batch();
+    const up = this.map.upper;
     for (const b of this.map.boxes) {
       if (b.kind !== 'wall' && b.kind !== 'sill' && b.kind !== 'cover') continue;
+      // ground-floor walls that carry a second storey have no visible top
+      if (up && Math.abs(b.max[1] - up.floorY) < 0.05) continue;
       const w = b.max[0] - b.min[0], d = b.max[2] - b.min[2], h = b.max[1];
       const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2;
       const o = b.kind === 'wall' ? 0.07 : 0.04;
@@ -292,7 +295,7 @@ export class Decor {
       caps.box(w + o * 2, t, d + o * 2, cx, h + t / 2 - 0.02, cz);
       if (b.kind === 'wall') {
         caps.box(w + 0.02, 0.06, d + 0.02, cx, h - 0.25, cz); // thin band under the cap
-        plinths.box(w + 0.05, 0.28, d + 0.05, cx, 0.14, cz);
+        plinths.box(w + 0.05, 0.28, d + 0.05, cx, b.min[1] + 0.14, cz);
       }
     }
     const sc = capMat.userData.scale || 3;
@@ -310,7 +313,7 @@ export class Decor {
     const frames = [];
     const litChance = this.cfg.litWindows ?? 0.12;
     for (const b of m.boxes) {
-      if (b.kind !== 'wall' || b.max[1] < m.wallHeight + 1.8) continue;
+      if (b.kind !== 'wall' || b.upper || b.max[1] < m.wallHeight + 1.8) continue;
       const faces = [
         { n: [1, 0, 0], len: b.max[2] - b.min[2], at: (t) => [b.max[0], b.min[2] + t], rot: Math.PI / 2 },
         { n: [-1, 0, 0], len: b.max[2] - b.min[2], at: (t) => [b.min[0], b.min[2] + t], rot: Math.PI / 2 },

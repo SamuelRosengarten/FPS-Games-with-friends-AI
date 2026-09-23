@@ -111,3 +111,38 @@ test('every map builds, has spawns and a closed boundary', () => {
     }
   }
 });
+
+test('embassy: both staircases can be walked up to the second floor and site A is reachable', async () => {
+  const { NavGraph } = await import('../server/nav.js');
+  const m = loadMap('embassy');
+  const w = new PhysicsWorld(m.boxes, m.bounds);
+  const cell = (r, c) => [m.x0 + c * m.cellSize + m.cellSize / 2, m.z0 + r * m.cellSize + m.cellSize / 2];
+  const fy = m.upper.floorY;
+  // inside staircase: start in the lobby south of it and run north
+  for (const [r, c] of [[23, 29], [18, 32]]) {
+    const [x, z] = cell(r, c);
+    const s = body(x, 0.01, z);
+    for (let i = 0; i < 240; i++) stepPlayer(w, s, { yaw: 0, fwd: 1 }, 1 / 60);
+    assert.ok(Math.abs(s.y - fy) < 0.05, `stairs at ${r},${c}: ended at y=${s.y.toFixed(2)} z=${s.z.toFixed(1)}`);
+  }
+  // a player upstairs stands on the slab, one downstairs has headroom under it
+  const [ux, uz] = cell(20, 12);
+  const up = body(ux, fy + 0.5, uz);
+  for (let i = 0; i < 60; i++) stepPlayer(w, up, { yaw: 0 }, 1 / 60);
+  assert.ok(Math.abs(up.y - fy) < 0.01 && up.onGround);
+  // bots can path from both spawns to nodes inside the upstairs site
+  const nav = new NavGraph(w);
+  nav.markReachable([...m.spawns[1], ...m.spawns[2]]);
+  const inA = nav.nodesInZone(m.zones.A);
+  // (floor nodes plus the conference table tops)
+  assert.ok(inA.length > 10 && inA.every((n) => n.y > fy - 0.1 && n.y < fy + 1.1), 'site A nodes are on the upper floor');
+  const floorA = inA.filter((n) => Math.abs(n.y - fy) < 0.05);
+  for (const sp of [m.spawns[1][0], m.spawns[2][0]]) {
+    const path = nav.findPath(w, { x: sp[0], y: sp[1] + 0.1, z: sp[2] }, floorA[Math.floor(floorA.length / 2)]);
+    assert.ok(path && path.length > 5, 'path to site A');
+    // stairs are walked, not jumped
+    assert.ok(path.filter((p) => p.type === 'jump').length === 0, 'no jumps needed to reach site A');
+  }
+  // upper-floor FFA spawns exist
+  assert.ok(m.spawns.ffa.some((p) => Math.abs(p[1] - fy) < 0.01));
+});

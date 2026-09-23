@@ -27,7 +27,9 @@ export class WorldView {
     const m = this.map;
     const c = Math.floor((x - m.x0) / m.cellSize), r = Math.floor((z - m.z0) / m.cellSize);
     if (r < 0 || c < 0 || r >= m.rows || c >= m.cols) return false;
-    return m.roofed[r][c] && y < m.roofHeight;
+    if (m.upper && y >= m.upper.floorY - 0.05) return m.upper.roofed[r][c] && y < m.upper.floorY + m.upper.roofHeight;
+    const ceiling = m.upper && m.upper.grid[r][c] !== ' ' ? m.upper.floorY - 0.3 : m.upper ? m.upper.floorY + m.upper.roofHeight : m.roofHeight;
+    return m.roofed[r][c] && y < ceiling;
   }
 
   isWallCell(r, c) {
@@ -38,11 +40,12 @@ export class WorldView {
   }
 
   // Baked ambient term for a vertex.
-  ambientAt(x, y, z, nx, ny, nz, kind) {
+  ambientAt(x, y, z, nx, ny, nz, kind, floor = 0) {
     let k = 1;
     // contact darkening near the floor on vertical faces
-    if (ny === 0 && kind !== 'crate') k *= 0.62 + 0.38 * Math.min(1, Math.pow(y / 1.6, 0.7));
-    else if (ny === 0) k *= 0.75 + 0.25 * Math.min(1, y / 0.8);
+    const ly = Math.max(0, y - floor);
+    if (ny === 0 && kind !== 'crate') k *= 0.62 + 0.38 * Math.min(1, Math.pow(ly / 1.6, 0.7));
+    else if (ny === 0) k *= 0.75 + 0.25 * Math.min(1, ly / 0.8);
     // interiors
     const sx = x + nx * 0.25, sz = z + nz * 0.25;
     if (this.roofedAt(sx, sz, y - 0.01)) k *= ny < 0 ? 0.55 : 0.66;
@@ -190,15 +193,16 @@ export class WorldView {
     faces.push({ n: [0, 0, -1], corners: [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], u: 'x', flipU: true });
     // +Y
     faces.push({ n: [0, 1, 0], corners: [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], top: true });
-    // -Y (skip when resting on the ground)
-    if (y0 > 0.01) faces.push({ n: [0, -1, 0], corners: [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], top: true });
+    // -Y (skip when resting on the ground or an upper floor)
+    const floor = b.floorY || 0;
+    if (y0 > floor + 0.01 || (b.kind === 'slab' && y0 > 0.01)) faces.push({ n: [0, -1, 0], corners: [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], top: true });
 
     for (const f of faces) {
       const [nx, ny, nz] = f.n;
       if (!f.top) {
         // split vertical faces into horizontal strips for smooth contact shading near the floor
         const hs = [y0];
-        for (const s of STRIPS) if (s > y0 + 0.05 && s < y1 - 0.05 && y0 < 0.01) hs.push(s);
+        for (const s of STRIPS) if (floor + s > y0 + 0.05 && floor + s < y1 - 0.05 && y0 < floor + 0.01) hs.push(floor + s);
         hs.push(y1);
         const [c0, c1] = [f.corners[0], f.corners[1]];
         for (let i = 0; i < hs.length - 1; i++) {
@@ -231,7 +235,7 @@ export class WorldView {
         else { u = (f.flipU ? -p[2] : p[2]) / sc; v = p[1] / sc; }
       }
       buf.uv.push(u, v);
-      const k = this.ambientAt(p[0], p[1], p[2], nx, ny, nz, kind);
+      const k = this.ambientAt(p[0], p[1], p[2], nx, ny, nz, kind, b.kind === 'slab' ? 0 : b.floorY || 0);
       buf.col.push(k, k, k);
     }
     buf.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -361,7 +365,7 @@ export class WorldView {
       const mat = new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 });
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
       mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(cx, 0.02, cz);
+      mesh.position.set(cx, (z.floor || 0) + 0.02, cz);
       mesh.receiveShadow = true;
       mesh.renderOrder = 1;
       this.group.add(mesh);

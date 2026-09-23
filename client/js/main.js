@@ -40,7 +40,7 @@ function toGame(m) {
   game.handle(m);
 }
 
-window.__breachpoint = { game, net, graphics, settings, input, ui, get state() { return state; } };
+window.__breachpoint = { game, net, graphics, settings, input, ui, get state() { return state; }, get chatOpen() { return chatOpen; } };
 
 // ------------------------------------------------------------------ network
 ui.on('join', (name, password) => {

@@ -1432,7 +1432,7 @@ export class ClientGame {
   drawRadar() {
     const me = this.me;
     const spec = !me.alive && this.specId != null ? this.players.get(this.specId)?.state : null;
-    const center = spec ? { x: spec.x, z: spec.z, yaw: spec.yaw } : { x: me.x, z: me.z, yaw: me.yaw };
+    const center = spec ? { x: spec.x, y: spec.y, z: spec.z, yaw: spec.yaw } : { x: me.x, y: me.y, z: me.z, yaw: me.yaw };
     const list = [];
     const eye = eyePosition(me);
     const now = performance.now();
@@ -1454,7 +1454,7 @@ export class ClientGame {
         if (!(rp.spottedUntil > now)) continue;
       }
       const color = this.ffa ? '#ff5050' : enemy ? '#ff4040' : rp.team === 1 ? '#ff9a4d' : '#4aa8ff';
-      list.push({ x: s.x, z: s.z, yaw: s.yaw, color, enemy, dead: !rp.alive });
+      list.push({ x: s.x, y: s.y, z: s.z, yaw: s.yaw, color, enemy, dead: !rp.alive });
     }
     const b = this.bomb;
     let bomb = null;

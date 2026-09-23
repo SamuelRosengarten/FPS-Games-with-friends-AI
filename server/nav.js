@@ -158,7 +158,7 @@ export class NavGraph {
   }
 
   nodesInZone(zone) {
-    return (this.reachable || this.nodes).filter((n) => n.x >= zone.min[0] && n.x <= zone.max[0] && n.z >= zone.min[2] && n.z <= zone.max[2] && n.edges.length >= 5);
+    return (this.reachable || this.nodes).filter((n) => n.x >= zone.min[0] && n.x <= zone.max[0] && n.z >= zone.min[2] && n.z <= zone.max[2] && n.y >= zone.min[1] - 0.2 && n.y <= zone.max[1] && n.edges.length >= 5);
   }
 
   // A* search. Returns array of {x,y,z,type} waypoints or null.

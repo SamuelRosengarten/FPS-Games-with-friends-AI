@@ -2,8 +2,9 @@ import { buildMap } from './builder.js';
 import sandstone from './sandstone.js';
 import compound from './compound.js';
 import arena from './arena.js';
+import embassy from './embassy.js';
 
-export const MAP_DEFS = [sandstone, compound, arena];
+export const MAP_DEFS = [sandstone, compound, embassy, arena];
 
 const cache = new Map();
 
