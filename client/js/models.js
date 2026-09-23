@@ -5,6 +5,10 @@ import { WEAPONS } from '../shared/weapons.js';
 import { PLAYER } from '../shared/constants.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { gunMaps, projectUV } from './gunmats.js';
+import { Builder, bakedMaterial, SURF } from './surface.js';
+import { makeRig, operatorGeometry, teamLook, UPPER_ARM, FORE_ARM } from './character.js';
+
+export { teamLook, bakedMaterial };
 
 const matCache = new Map();
 function mat(key, params) {
@@ -12,12 +16,13 @@ function mat(key, params) {
   return matCache.get(key);
 }
 // Surface detail maps; roughness maps multiply the material roughness, so divide by their average.
-const SURF = { metal: 0.42, polymer: 0.66, wood: 0.52, fabric: 0.8 };
+const SURF_AVG = { metal: 0.42, polymer: 0.66, wood: 0.52, fabric: 0.8, rubber: 1 };
 function detailed(key, params, kind) {
   if (matCache.has(key)) return matCache.get(key);
   const maps = gunMaps()[kind];
   const m = new THREE.MeshStandardMaterial({ ...params, ...maps });
-  if (maps.roughnessMap) m.roughness = Math.min(1, params.roughness / SURF[kind]);
+  m.userData.surf = kind;
+  if (maps.roughnessMap) m.roughness = Math.min(1, params.roughness / SURF_AVG[kind]);
   m.normalScale.set(0.7, 0.7);
   matCache.set(key, m);
   return m;
@@ -27,7 +32,7 @@ const M = {
   steel: () => detailed('steel', { color: 0x8d9299, metalness: 0.9, roughness: 0.3 }, 'metal'),
   blade: () => detailed('blade', { color: 0xc8ccd2, metalness: 1, roughness: 0.2 }, 'metal'),
   polymer: () => detailed('polymer', { color: 0x1c1d1f, metalness: 0.05, roughness: 0.72 }, 'polymer'),
-  wood: () => detailed('wood', { color: 0x8a5228, metalness: 0, roughness: 0.5 }, 'wood'),
+  wood: () => detailed('wood', { color: 0x74431f, metalness: 0, roughness: 0.5 }, 'wood'),
   brass: () => mat('brass', { color: 0xc9a14a, metalness: 1, roughness: 0.3 }),
   glass: () => mat('glass', { color: 0x223344, metalness: 0.9, roughness: 0.05, emissive: 0x0a1a2a }),
   red: () => mat('reddot', { color: 0xff2020, emissive: 0xff2020, emissiveIntensity: 3 }),
@@ -472,116 +477,30 @@ export function weaponTemplate(id) {
 
 // ------------------------------------------------------------------ player characters
 
-const FFA_COLORS = [0xd9483b, 0x3bb4d9, 0x7ed93b, 0xd9b43b, 0xa13bd9, 0xd93b8f, 0x3bd9a1, 0xe0e0e0, 0x8a5a2b, 0x5b6cff];
-
-export function teamLook(team, id, ffa) {
-  if (ffa) {
-    const c = FFA_COLORS[id % FFA_COLORS.length];
-    return { uniform: 0x4d4a44, pants: 0x3a3833, vest: 0x2e2e2c, pack: 0x2b2b28, accent: c, head: 0x2a2a2a, helmet: c, gloves: 0x1c1c1c, boots: 0x222222, pads: 0x262626, lens: c, balaclava: true, ears: false };
-  }
-  if (team === 1) return { uniform: 0x9c8566, pants: 0x74634a, vest: 0x4a4637, pack: 0x5b513c, accent: 0xff8a3d, head: 0x2b2b2b, helmet: 0x5a513f, gloves: 0x2a2a2a, boots: 0x3a3025, pads: 0x3b3830, lens: 0xff9a3d, balaclava: true, ears: false };
-  return { uniform: 0x3a4b66, pants: 0x2a3548, vest: 0x1f2a38, pack: 0x222a33, accent: 0x4aa8ff, head: 0xc99a7a, helmet: 0x2e3a4a, gloves: 0x1a1a1a, boots: 0x1c1c1c, pads: 0x1d2229, lens: 0x4ad0ff, balaclava: false, ears: true };
-}
-
-// Every part of a character (and every third-person weapon) is merged into one geometry that carries
-// per-vertex colour, roughness, metalness and emissive, so they all share this single material.
-let bakedMat = null;
-export function bakedMaterial() {
-  if (bakedMat) return bakedMat;
-  bakedMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 1 });
-  bakedMat.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec3 aMat;\nvarying vec3 vMat;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMat = aMat;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vMat;')
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = vMat.x;')
-      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = vMat.y;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vMat.z;');
-  };
-  bakedMat.customProgramCacheKey = () => 'baked-vertex-material';
-  return bakedMat;
-}
-
-const _pm = new THREE.Matrix4();
-const _pq = new THREE.Quaternion();
-const _pe = new THREE.Euler();
-const _ps = new THREE.Vector3();
-const _pp = new THREE.Vector3();
-const _pc = new THREE.Color();
-const _pn = new THREE.Matrix3();
-const _pv = new THREE.Vector3();
-const IDENTITY = new THREE.Matrix4();
-
-class PartBuilder {
-  constructor() { this.parts = []; }
-  // geo is consumed. o: { p, r, s, rough, metal, emit }
-  add(bone, geo, color, o = {}) {
-    _pm.compose(_pp.fromArray(o.p || [0, 0, 0]), _pq.setFromEuler(_pe.fromArray([...(o.r || [0, 0, 0]), 'XYZ'])), _ps.fromArray(o.s || [1, 1, 1]));
-    geo.applyMatrix4(_pm);
-    this.parts.push({ bone, geo, color, rough: o.rough ?? 0.8, metal: o.metal ?? 0, emit: o.emit ?? 0 });
-  }
-  // Bake parts into one geometry. With bones, positions go to bind-pose space and get skin attributes.
-  build(bones = null) {
-    let nv = 0, ni = 0;
-    for (const p of this.parts) { nv += p.geo.attributes.position.count; ni += p.geo.index ? p.geo.index.count : p.geo.attributes.position.count; }
-    const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3), am = new Float32Array(nv * 3);
-    const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
-    const si = bones ? new Uint16Array(nv * 4) : null, sw = bones ? new Float32Array(nv * 4) : null;
-    let o = 0, oi = 0;
-    for (const p of this.parts) {
-      const mw = p.bone ? p.bone.matrixWorld : IDENTITY;
-      _pn.getNormalMatrix(mw);
-      const P = p.geo.attributes.position, N = p.geo.attributes.normal;
-      _pc.set(p.color);
-      const bi = bones && p.bone ? Math.max(0, bones.indexOf(p.bone)) : 0;
-      for (let i = 0; i < P.count; i++) {
-        _pv.fromBufferAttribute(P, i).applyMatrix4(mw);
-        pos[(o + i) * 3] = _pv.x; pos[(o + i) * 3 + 1] = _pv.y; pos[(o + i) * 3 + 2] = _pv.z;
-        _pv.fromBufferAttribute(N, i).applyMatrix3(_pn).normalize();
-        nor[(o + i) * 3] = _pv.x; nor[(o + i) * 3 + 1] = _pv.y; nor[(o + i) * 3 + 2] = _pv.z;
-        col[(o + i) * 3] = _pc.r; col[(o + i) * 3 + 1] = _pc.g; col[(o + i) * 3 + 2] = _pc.b;
-        am[(o + i) * 3] = p.rough; am[(o + i) * 3 + 1] = p.metal; am[(o + i) * 3 + 2] = p.emit;
-        if (si) { si[(o + i) * 4] = bi; sw[(o + i) * 4] = 1; }
-      }
-      if (p.geo.index) for (let i = 0; i < p.geo.index.count; i++) idx[oi++] = o + p.geo.index.getX(i);
-      else for (let i = 0; i < P.count; i++) idx[oi++] = o + i;
-      o += P.count;
-      p.geo.dispose();
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    geo.setAttribute('aMat', new THREE.BufferAttribute(am, 3));
-    if (si) {
-      geo.setAttribute('skinIndex', new THREE.BufferAttribute(si, 4));
-      geo.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
-    }
-    geo.setIndex(new THREE.BufferAttribute(idx, 1));
-    geo.computeBoundingSphere();
-    return geo;
-  }
-}
-
-// Third-person / world weapon: the full weapon model flattened into one baked mesh (one draw call).
+// Third-person / world weapon: the full weapon model flattened into one baked mesh (one draw call) that
+// keeps each part's colour, roughness, metalness and surface detail type.
+const SURF_OF = { metal: SURF.metal, polymer: SURF.polymer, wood: SURF.wood, rubber: SURF.rubber, fabric: SURF.fabric };
 const bakedWeaponCache = new Map();
 export function bakedWeapon(id) {
   if (!bakedWeaponCache.has(id)) {
     const src = createWeaponModel(id);
     src.updateMatrixWorld(true);
-    const pb = new PartBuilder();
+    const b = new Builder();
     src.traverse((m) => {
       if (!m.isMesh || !m.visible) return;
       const mt = m.material;
       const glow = mt.emissive && mt.emissiveIntensity > 0 && mt.emissive.getHex() !== 0;
-      const geo = m.geometry.clone().applyMatrix4(m.matrixWorld);
+      const geo = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
       if (!geo.attributes.normal) geo.computeVertexNormals();
-      pb.add(null, geo, glow && mt.emissive.getHex() !== 0 && mt.color.getHex() === mt.emissive.getHex() ? mt.emissive.getHex() : mt.color.getHex(), {
-        rough: mt.roughness ?? 0.5, metal: mt.metalness ?? 0, emit: glow ? Math.min(3, mt.emissiveIntensity * (mt.emissive.r + mt.emissive.g + mt.emissive.b) / 3 * 2) : 0,
+      b.add(geo, {
+        matrix: m.matrixWorld,
+        color: glow && mt.color.getHex() === mt.emissive.getHex() ? mt.emissive.getHex() : mt.color.getHex(),
+        rough: mt.roughness ?? 0.5, metal: mt.metalness ?? 0,
+        emit: glow ? Math.min(3, mt.emissiveIntensity * (mt.emissive.r + mt.emissive.g + mt.emissive.b) / 3 * 2) : 0,
+        tex: SURF_OF[mt.userData.surf] ?? SURF.none,
       });
     });
-    bakedWeaponCache.set(id, { geo: pb.build(), info: { ...src.userData } });
+    bakedWeaponCache.set(id, { geo: b.build(false), info: { ...src.userData } });
   }
   const c = bakedWeaponCache.get(id);
   const mesh = new THREE.Mesh(c.geo, bakedMaterial());
@@ -591,15 +510,6 @@ export function bakedWeapon(id) {
   return mesh;
 }
 
-const RB = (w, h, d, r = 0.02) => new RoundedBoxGeometry(w, h, d, 1, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001));
-const CAP = (r, len, seg = 10) => new THREE.CapsuleGeometry(r, len, 3, seg);
-const CYL = (rt, rb, h, seg = 12, open = false) => new THREE.CylinderGeometry(rt, rb, h, seg, 1, open);
-const SPH = (r, ws = 14, hs = 10, t0 = 0, tl = Math.PI) => new THREE.SphereGeometry(r, ws, hs, 0, Math.PI * 2, t0, tl);
-const shade = (hex, k) => _pc.set(hex).multiplyScalar(k).getHex();
-
-// Bind pose for the arms (they are driven by two-bone IK every frame).
-const ARM_POSE = { r: { up: [0.55, 0, 0.12], fore: [1.05, 0, 0] }, l: { up: [1.25, 0, -0.55], fore: [0.35, 0.1, 0] } };
-const UPPER_ARM = 0.3, FORE_ARM = 0.3;
 // Per weapon kind: where the firing hand holds the grip (model space, relative to the aim pivot at
 // shoulder height) and how far the shoulders turn (bladed stance) so the support hand reaches forward.
 const STANCE = {
@@ -644,106 +554,11 @@ function solveArm(arm, T, pole) {
 export class PlayerModel {
   constructor(look, name = '', showName = false) {
     const L = look;
-    const pb = new PartBuilder();
-    const bones = [];
-    const bone = (parent, x, y, z) => {
-      const b = new THREE.Bone();
-      b.position.set(x, y, z);
-      if (parent) parent.add(b);
-      bones.push(b);
-      return b;
-    };
-    const faceCol = L.balaclava ? L.head : 0xc99a7a;
-    const dark = 0x1b1b1b;
-
-    const body = bone(null, 0, 0, 0);
-    const hips = bone(body, 0, 0.92, 0);
-    pb.add(hips, RB(0.34, 0.17, 0.23, 0.05), L.pants);
-    pb.add(hips, RB(0.365, 0.05, 0.25, 0.015), 0x2a2620, { p: [0, 0.075, 0], rough: 0.6 });
-    pb.add(hips, RB(0.06, 0.04, 0.02, 0.006), 0x8a877e, { p: [0, 0.075, -0.13], rough: 0.35, metal: 0.8 });
-    pb.add(hips, RB(0.11, 0.11, 0.07, 0.02), L.vest, { p: [-0.14, 0.0, 0.12] });
-
-    const legs = [];
-    for (const side of [-1, 1]) {
-      const thigh = bone(hips, side * 0.1, -0.03, 0);
-      pb.add(thigh, CAP(0.08, 0.27), L.pants, { p: [0, -0.22, 0], rough: 0.9 });
-      pb.add(thigh, RB(0.05, 0.13, 0.12, 0.015), shade(L.pants, 0.88), { p: [side * 0.075, -0.22, 0] });
-      if (side === 1) {
-        pb.add(thigh, RB(0.065, 0.17, 0.1, 0.02), L.vest, { p: [0.1, -0.13, 0.0] });
-        pb.add(thigh, RB(0.035, 0.07, 0.045, 0.008), 0x1c1d1f, { p: [0.1, -0.02, 0.02], rough: 0.7 });
-      }
-      const knee = bone(thigh, 0, -0.44, 0);
-      pb.add(knee, CAP(0.068, 0.27), L.pants, { p: [0, -0.2, 0], rough: 0.9 });
-      pb.add(knee, RB(0.12, 0.13, 0.075, 0.03), L.pads, { p: [0, -0.02, -0.06], rough: 0.6 });
-      pb.add(knee, RB(0.124, 0.022, 0.078, 0.006), L.accent, { p: [0, -0.03, -0.062], emit: 0.25 });
-      pb.add(knee, RB(0.125, 0.15, 0.14, 0.035), L.boots, { p: [0, -0.37, 0.0], rough: 0.7 });
-      pb.add(knee, RB(0.125, 0.075, 0.25, 0.03), L.boots, { p: [0, -0.425, -0.05], rough: 0.7 });
-      pb.add(knee, RB(0.13, 0.03, 0.26, 0.01), 0x121212, { p: [0, -0.463, -0.05], rough: 0.95 });
-      legs.push({ thigh, knee });
-    }
-
-    const spine = bone(hips, 0, 0.04, 0);
-    pb.add(spine, RB(0.33, 0.22, 0.2, 0.06), L.uniform, { p: [0, 0.12, 0], rough: 0.9 });
-    pb.add(spine, RB(0.42, 0.3, 0.24, 0.07), L.uniform, { p: [0, 0.37, 0], rough: 0.9 });
-    pb.add(spine, RB(0.445, 0.2, 0.25, 0.04), L.vest, { p: [0, 0.27, 0] });
-    pb.add(spine, RB(0.37, 0.32, 0.06, 0.025), L.vest, { p: [0, 0.34, -0.125] });
-    pb.add(spine, RB(0.37, 0.33, 0.06, 0.025), L.vest, { p: [0, 0.35, 0.125] });
-    for (const sx of [-1, 1]) pb.add(spine, RB(0.075, 0.035, 0.31, 0.012), L.vest, { p: [sx * 0.135, 0.52, 0] });
-    for (let i = -1; i <= 1; i++) {
-      pb.add(spine, RB(0.085, 0.12, 0.055, 0.015), shade(L.vest, 0.82), { p: [i * 0.098, 0.25, -0.172] });
-      pb.add(spine, RB(0.06, 0.03, 0.035, 0.006), 0x1c1d1f, { p: [i * 0.098, 0.325, -0.172], rough: 0.6 });
-    }
-    pb.add(spine, RB(0.07, 0.1, 0.05, 0.012), shade(L.vest, 0.82), { p: [-0.13, 0.44, -0.168] });
-    pb.add(spine, RB(0.075, 0.042, 0.012, 0.004), L.accent, { p: [0.1, 0.45, -0.158], emit: 0.5 });
-    pb.add(spine, CYL(0.1, 0.12, 0.07, 12), L.uniform, { p: [0, 0.54, 0], rough: 0.9 });
-    pb.add(spine, RB(0.28, 0.31, 0.11, 0.035), L.pack, { p: [0, 0.33, 0.205] });
-    pb.add(spine, CYL(0.05, 0.05, 0.27, 10), shade(L.pack, 0.85), { p: [0, 0.51, 0.2], r: [0, 0, Math.PI / 2] });
-    pb.add(spine, RB(0.08, 0.05, 0.012, 0.004), L.accent, { p: [0, 0.42, 0.262], emit: 0.6 });
-    pb.add(spine, CYL(0.005, 0.005, 0.32, 5), dark, { p: [-0.11, 0.62, 0.22], r: [0.12, 0, 0.1], rough: 0.5 });
-
-    const neck = bone(spine, 0, 0.56, 0);
-    pb.add(neck, CYL(0.05, 0.056, 0.1, 10), faceCol, { p: [0, 0.02, 0] });
-    const head = bone(neck, 0, 0.1, 0);
-    pb.add(head, SPH(0.115, 16, 12), faceCol, { p: [0, 0.04, 0], s: [0.95, 1.05, 1], rough: 0.8 });
-    if (!L.balaclava) {
-      pb.add(head, RB(0.19, 0.075, 0.045, 0.02), 0x232323, { p: [0, -0.035, -0.095] });
-    } else {
-      pb.add(head, RB(0.17, 0.05, 0.04, 0.015), shade(L.head, 1.3), { p: [0, -0.02, -0.098] });
-    }
-    pb.add(head, SPH(0.133, 18, 10, 0, Math.PI * 0.52), L.helmet, { p: [0, 0.06, 0], rough: 0.55, metal: 0.15 });
-    pb.add(head, CYL(0.138, 0.138, 0.024, 20, true), shade(L.helmet, 0.8), { p: [0, 0.052, 0], rough: 0.6 });
-    pb.add(head, RB(0.055, 0.04, 0.03, 0.008), 0x2a2c30, { p: [0, 0.15, -0.115], rough: 0.4, metal: 0.7 });
-    for (const sx of [-1, 1]) {
-      pb.add(head, RB(0.025, 0.05, 0.14, 0.01), 0x2a2c30, { p: [sx * 0.131, 0.1, 0], rough: 0.5, metal: 0.5 });
-      if (L.ears) pb.add(head, CYL(0.042, 0.042, 0.04, 12), 0x202224, { p: [sx * 0.125, 0.02, 0], r: [0, 0, Math.PI / 2], rough: 0.7 });
-    }
-    pb.add(head, CYL(0.121, 0.121, 0.026, 16, true), dark, { p: [0, 0.07, 0], rough: 0.8 });
-    pb.add(head, RB(0.2, 0.058, 0.05, 0.018), L.lens, { p: [0, 0.07, -0.103], rough: 0.12, metal: 0.6, emit: 0.3 });
-    pb.add(head, RB(0.212, 0.068, 0.04, 0.02), dark, { p: [0, 0.07, -0.094], rough: 0.7 });
-
-    const aim = bone(spine, 0, 0.46, 0);
-    const arms = {};
-    for (const [key, side] of [['r', 1], ['l', -1]]) {
-      const grp = bone(aim, side * 0.23, 0, 0);
-      pb.add(grp, SPH(0.072, 10, 8, 0, Math.PI / 2), L.vest, { p: [0, -0.015, 0], s: [1, 0.85, 1.05] });
-      pb.add(grp, CAP(0.06, 0.2), L.uniform, { p: [0, -0.15, 0], rough: 0.9 });
-      if (side === 1) pb.add(grp, CYL(0.064, 0.064, 0.035, 12, true), L.accent, { p: [0, -0.09, 0], emit: 0.4 });
-      const elbow = bone(grp, 0, -UPPER_ARM, 0);
-      pb.add(elbow, RB(0.085, 0.075, 0.075, 0.025), L.pads, { p: [0, 0.0, 0.035], rough: 0.6 });
-      pb.add(elbow, CAP(0.054, 0.18), L.uniform, { p: [0, -0.125, 0], rough: 0.9 });
-      pb.add(elbow, CYL(0.059, 0.059, 0.05, 10), L.gloves, { p: [0, -0.23, 0] });
-      pb.add(elbow, RB(0.075, 0.1, 0.085, 0.025), L.gloves, { p: [0, -FORE_ARM, 0] });
-      grp.rotation.fromArray(ARM_POSE[key].up);
-      elbow.rotation.fromArray(ARM_POSE[key].fore);
-      arms[key] = { grp, elbow };
-    }
-
-    // bind pose -> skinned mesh
-    body.updateMatrixWorld(true);
-    const geo = pb.build(bones);
-    const mesh = new THREE.SkinnedMesh(geo, bakedMaterial());
+    const rig = makeRig();
+    const { body, hips, legs, spine, chest, neck, head, aim, arms } = rig;
+    const mesh = new THREE.SkinnedMesh(operatorGeometry(L), bakedMaterial());
     mesh.add(body);
-    mesh.bind(new THREE.Skeleton(bones));
+    mesh.bind(new THREE.Skeleton(rig.bones));
     mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.9, 0), 1.5);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -752,10 +567,10 @@ export class PlayerModel {
     weaponMount.position.fromArray(STANCE.rifle.grip);
     aim.add(weaponMount);
     const bomb = new THREE.Mesh(new RoundedBoxGeometry(0.26, 0.12, 0.16, 1, 0.02), M.color(0x5a5245, 0.2, 0.7));
-    bomb.position.set(0, 0.22, 0.3);
+    bomb.position.set(0, -0.04, 0.3);
     bomb.visible = false;
     bomb.castShadow = true;
-    spine.add(bomb);
+    chest.add(bomb);
 
     const root = new THREE.Group();
     root.add(mesh);
@@ -765,6 +580,7 @@ export class PlayerModel {
     this.hips = hips;
     this.legs = legs;
     this.spine = spine;
+    this.chest = chest;
     this.head = head;
     this.neck = neck;
     this.aim = aim;
@@ -839,6 +655,7 @@ export class PlayerModel {
 
   revive() {
     this.deathT = -1;
+    this.chest.rotation.set(0, 0, 0);
     this.body.rotation.set(0, 0, 0);
     this.body.position.set(0, 0, 0);
     this.hips.position.set(0, 0.92, 0);
@@ -860,7 +677,8 @@ export class PlayerModel {
       this.body.rotation.set(f * (Math.PI / 2) * this.deathZ - bounce, this.deathSpin * e, -f * (Math.PI / 2) * this.deathX * 0.9);
       this.body.position.set(this.deathX * e * 0.35, Math.sin(Math.min(1, t * 1.6) * Math.PI) * 0.06, this.deathZ * e * 0.35);
       this.hips.position.y = 0.92 - f * 0.74;
-      this.aim.rotation.x = -f * 0.6;
+      this.chest.rotation.set(-f * 0.2, 0, 0);
+      this.aim.rotation.set(-f * 0.4, 0, 0);
       this.head.rotation.x = f * 0.5 * this.deathZ;
       this.legs[0].thigh.rotation.x = f * 0.45;
       this.legs[1].thigh.rotation.x = -f * 0.25;
@@ -904,15 +722,19 @@ export class PlayerModel {
     const info = this.weapon?.userData || {};
     const st = STANCE[info.kind] || STANCE.rifle;
     const tw = st.twist;
-    this.aim.rotation.set(pitch - c * 0.25 + this.recoil, tw, 0);
+    let aimX = pitch - c * 0.25 + this.recoil;
     this.head.rotation.x = pitch * 0.6 - c * 0.2;
     if (s.planting || s.defusing) {
-      this.aim.rotation.x = -0.9;
+      aimX = -0.9;
       this.head.rotation.x = -0.6;
     } else if (s.reinforcing) {
-      this.aim.rotation.x = -0.35 + Math.sin(this.breath * 9) * 0.06;
+      aimX = -0.35 + Math.sin(this.breath * 9) * 0.06;
       this.head.rotation.x = -0.2;
     }
+    // the upper chest takes part of the pitch and most of the bladed-stance twist, the shoulders the rest
+    const chestX = Math.max(-0.3, Math.min(0.25, aimX * 0.3));
+    this.chest.rotation.set(chestX, tw * 0.7, 0);
+    this.aim.rotation.set(aimX - chestX, tw * 0.3, 0);
     // reload: weapon rolls towards the body, support hand goes to the magazine and back
     const wantReload = s.reloading ? 1 : 0;
     this.reloadK += (wantReload - this.reloadK) * Math.min(1, dt * 10);
