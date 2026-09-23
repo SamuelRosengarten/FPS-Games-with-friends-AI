@@ -113,6 +113,8 @@ export default {
     { r: 26, c: 8, rows: 1, cols: 1, h: 2.1, mat: 'containerRed', inset: 0.3, kind: 'truck' },
   ],
   decor: {
+    skyline: 'industrial',
+    flags: [{ r: 19, c: 14, h: 5, design: 'company' }, { r: 19, c: 25, h: 5, design: 'company' }],
     trim: 'concrete',
     barbed: true,
     lampPosts: 8,

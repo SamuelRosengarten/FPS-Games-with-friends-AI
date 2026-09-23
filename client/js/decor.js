@@ -4,12 +4,43 @@
 
 import * as THREE from 'three';
 import { hash2 } from '../shared/constants.js';
+import { Skyline } from './skyline.js';
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
 const tmpS = new THREE.Vector3();
 const tmpP = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+
+// Shared wind clock for vegetation / cloth vertex animation.
+const windTime = { value: 0 };
+
+// Sways vertices in world space (applied after projection setup so instanced meshes move coherently).
+// weight: GLSL expression for how much a vertex moves (0 at the root).
+function addWind(mat, { amp = 0.1, freq = 1.3, weight = 'max(position.y, 0.0)', attr = false } = {}) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uWindTime = windTime;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', `#include <common>
+uniform float uWindTime;
+${attr ? 'attribute float aWind;' : ''}`)
+      .replace('#include <project_vertex>', `#include <project_vertex>
+{
+  vec4 wBase = vec4(transformed, 1.0);
+  #ifdef USE_INSTANCING
+  wBase = instanceMatrix * wBase;
+  #endif
+  wBase = modelMatrix * wBase;
+  float wK = ${weight};
+  float wPh = uWindTime * ${freq.toFixed(3)} + wBase.x * 0.23 + wBase.z * 0.31;
+  vec3 wOff = vec3(sin(wPh) + 0.35 * sin(wPh * 2.7 + 1.3), 0.15 * sin(wPh * 1.9), 0.6 * cos(wPh * 0.8 + 0.5)) * ${amp.toFixed(3)} * wK;
+  mvPosition.xyz += (viewMatrix * vec4(wOff, 0.0)).xyz;
+  gl_Position = projectionMatrix * mvPosition;
+}`);
+  };
+  mat.customProgramCacheKey = () => `wind-${amp}-${freq}-${weight}`;
+  return mat;
+}
 
 // ------------------------------------------------------------------ small geometry helpers
 
@@ -212,6 +243,85 @@ function signTex(text, color) {
 
 // ------------------------------------------------------------------ decor
 
+// Fictional flag designs.
+function flagTex(design) {
+  return cached('flag-' + design, () => canvasTex(256, 154, (g, w, h) => {
+    if (design === 'company') {
+      g.fillStyle = '#f2efe8'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#e0701f';
+      g.beginPath(); g.moveTo(0, h * 0.62); g.lineTo(w, h * 0.22); g.lineTo(w, h * 0.42); g.lineTo(0, h * 0.82); g.fill();
+      g.fillStyle = '#2b2f36'; g.font = 'bold 44px sans-serif'; g.textAlign = 'left'; g.textBaseline = 'top';
+      g.fillText('BRX', 16, 14);
+    } else if (design === 'desert') {
+      g.fillStyle = '#c9923e'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#2f6f75'; g.fillRect(0, h * 0.66, w, h * 0.34);
+      g.fillStyle = '#efe6cf'; g.fillRect(0, h * 0.58, w, h * 0.08);
+      g.beginPath(); g.arc(w * 0.3, h * 0.33, h * 0.16, 0, Math.PI * 2); g.fill();
+    } else {
+      // embassy: maroon / ivory diagonal with a gold roundel
+      g.fillStyle = '#efe7d6'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#7a1f2b';
+      g.beginPath(); g.moveTo(0, 0); g.lineTo(w, 0); g.lineTo(0, h); g.fill();
+      g.strokeStyle = '#d4a93c'; g.lineWidth = 9;
+      g.beginPath(); g.arc(w * 0.5, h * 0.5, h * 0.24, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#d4a93c';
+      g.beginPath(); g.moveTo(w * 0.5, h * 0.34); g.lineTo(w * 0.56, h * 0.58); g.lineTo(w * 0.44, h * 0.58); g.fill();
+    }
+    // weathering
+    for (let i = 0; i < 400; i++) {
+      g.fillStyle = `rgba(0,0,0,${0.02 + Math.random() * 0.03})`;
+      g.fillRect(Math.random() * w, Math.random() * h, 2 + Math.random() * 6, 1 + Math.random() * 3);
+    }
+  }));
+}
+
+// Round soft droplet sprite.
+function dropTex() {
+  return cached('drop', () => canvasTex(32, 32, (g) => {
+    const grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.4, 'rgba(255,255,255,0.7)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 32, 32);
+  }));
+}
+
+// Tileable ripple normal map for water.
+function waterNormalTex() {
+  return cached('water-normal', () => {
+    const S = 128;
+    const hgt = new Float32Array(S * S);
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        let v = 0;
+        for (let k = 0; k < 6; k++) {
+          const fx = 1 + Math.floor(hash2(k, 1) * 4), fy = 1 + Math.floor(hash2(k, 2) * 4), ph = hash2(k, 3) * 6.28;
+          v += Math.sin(((x * fx + y * fy) / S) * Math.PI * 2 * (1 + (k % 3)) + ph) / (1 + k * 0.5);
+        }
+        hgt[y * S + x] = v;
+      }
+    }
+    const data = new Uint8Array(S * S * 4);
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const dx = hgt[y * S + ((x + 1) % S)] - hgt[y * S + ((x - 1 + S) % S)];
+        const dy = hgt[((y + 1) % S) * S + x] - hgt[((y - 1 + S) % S) * S + x];
+        const n = new THREE.Vector3(-dx * 0.6, -dy * 0.6, 1).normalize();
+        const i = (y * S + x) * 4;
+        data[i] = (n.x * 0.5 + 0.5) * 255; data[i + 1] = (n.y * 0.5 + 0.5) * 255; data[i + 2] = (n.z * 0.5 + 0.5) * 255; data[i + 3] = 255;
+      }
+    }
+    const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+    return t;
+  });
+}
+
 export class Decor {
   constructor(graphics, textures, map) {
     this.g = graphics;
@@ -269,6 +379,9 @@ export class Decor {
       ['signs', () => this.buildSigns(cfg.signs || [])],
       ['decals', () => this.buildDecals(cfg.decals || ['crack', 'stain'])],
       ['puddles', () => cfg.puddles && this.buildPuddles(cfg.puddles)],
+      ['flags', () => cfg.flags && this.buildFlags(cfg.flags)],
+      ['fountain', () => cfg.fountain && this.buildFountain(cfg.fountain)],
+      ['skyline', () => cfg.skyline && this.buildSkyline(cfg.skyline)],
     ];
     this.timings = {};
     for (const [name, fn] of steps) {
@@ -382,6 +495,39 @@ export class Decor {
         metal.box(0.8, 0.05, 0.05, cx, top + 3.3, cz, Math.PI / 2);
       }
     }
+    // big flat roofs (out of reach): tar membrane, AC units, vents and skylights
+    const membrane = new Batch();
+    const glass = new Batch();
+    for (const b of m.boxes) {
+      if (b.kind !== 'roof' || b.max[1] < 3.5) continue;
+      const w = b.max[0] - b.min[0], d = b.max[2] - b.min[2];
+      if (w < 6 || d < 6) continue;
+      const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2, top = b.max[1];
+      membrane.box(w - 0.3, 0.03, d - 0.3, cx, top + 0.015, cz);
+      const n = Math.min(8, Math.floor((w * d) / 45));
+      for (let i = 0; i < n; i++) {
+        const h = hash2(Math.round(cx * 5) + i * 31, Math.round(cz * 5) + i * 17);
+        const x = b.min[0] + 1.6 + hash2(i * 7, Math.round(cx)) * (w - 3.2);
+        const z = b.min[2] + 1.6 + hash2(Math.round(cz), i * 11) * (d - 3.2);
+        if (h < 0.4) {
+          metal.box(1.3, 0.8, 0.9, x, top + 0.4, z);
+          metal.box(1.36, 0.06, 0.96, x, top + 0.83, z);
+          tanks.add(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 12), tmpM.compose(tmpP.set(x + 0.2, top + 0.87, z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        } else if (h < 0.65) {
+          metal.box(0.2, 0.7, 0.2, x, top + 0.35, z);
+          tanks.add(new THREE.CylinderGeometry(0.26, 0.2, 0.25, 10), tmpM.compose(tmpP.set(x, top + 0.8, z), tmpQ.identity(), tmpS.set(1, 1, 1)));
+        } else if (h < 0.85) {
+          metal.box(2.2, 0.35, 1.4, x, top + 0.175, z);
+          glass.box(2.0, 0.04, 1.2, x, top + 0.36, z);
+        } else {
+          tanks.add(new THREE.SphereGeometry(0.45, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), tmpM.compose(tmpP.set(x, top + 1.0, z), tmpQ.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -2.2), tmpS.set(1, 0.35, 1)));
+          metal.box(0.06, 0.9, 0.06, x, top + 0.45, z);
+        }
+      }
+    }
+    const mg = membrane.build(3);
+    if (mg) this.mesh(mg, withoutVertexColors(this.tex.material(m.mats.raised || m.mats.roof || 'concrete'), 0.62), { cast: false });
+    this.mesh(glass.build(), new THREE.MeshStandardMaterial({ color: 0x3a4a58, metalness: 0.4, roughness: 0.08, envMapIntensity: 1.5 }), { cast: false });
     this.mesh(metal.build(), new THREE.MeshStandardMaterial({ color: 0x8a8f94, metalness: 0.6, roughness: 0.5 }), { cast: true });
     this.mesh(tanks.build(), new THREE.MeshStandardMaterial({ color: this.cfg.tankColor ?? 0xd8d2c0, metalness: 0.3, roughness: 0.6 }), { cast: true });
   }
@@ -408,6 +554,7 @@ export class Decor {
     }
     const trunk = new Batch();
     const leaves = new Batch();
+    const tops = [];
     for (const [r, c, h] of chosen) {
       const [x, z] = this.cellCenter(r, c);
       const base = this.topAt(x, z);
@@ -429,6 +576,7 @@ export class Decor {
         px = nx; py = ny; pz = nz;
       }
       const top = new THREE.Vector3(px, py, pz);
+      tops.push(top);
       const fronds = 9;
       for (let i = 0; i < fronds; i++) {
         const a = (i / fronds) * Math.PI * 2 + h * 3;
@@ -448,9 +596,22 @@ export class Decor {
       }
     }
     this.mesh(trunk.build(), new THREE.MeshStandardMaterial({ color: 0x7a6248, roughness: 0.95 }), { cast: true });
-    const leafMat = new THREE.MeshStandardMaterial({ map: palmTex(), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8, color: 0xd8e8b0 });
-    const lm = this.mesh(leaves.build(), leafMat, { cast: true });
-    if (lm) this.animated.push({ type: 'sway', mesh: lm });
+    const leafGeo = leaves.build();
+    if (!leafGeo) return;
+    // sway weight grows towards the frond tips (distance from the crown)
+    const P = leafGeo.attributes.position;
+    const wgt = new Float32Array(P.count);
+    for (let i = 0; i < P.count; i++) {
+      let best = 1e9;
+      for (const q of tops) best = Math.min(best, Math.hypot(P.getX(i) - q.x, P.getY(i) - q.y, P.getZ(i) - q.z));
+      wgt[i] = Math.min(1, best / 4.2) ** 2;
+    }
+    leafGeo.setAttribute('aWind', new THREE.BufferAttribute(wgt, 1));
+    const tex = palmTex();
+    const leafMat = addWind(new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8, color: 0xd8e8b0 }), { amp: 0.28, freq: 1.1, weight: 'aWind', attr: true });
+    const lm = this.mesh(leafGeo, leafMat, { cast: true });
+    // shadows sway with the leaves
+    lm.customDepthMaterial = addWind(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.45, side: THREE.DoubleSide }), { amp: 0.28, freq: 1.1, weight: 'aWind', attr: true });
   }
 
   topAt(x, z) {
@@ -484,7 +645,7 @@ export class Decor {
     if (!pts.length) return;
     const geo = new THREE.PlaneGeometry(1, 1);
     geo.translate(0, 0.5, 0);
-    const mat = new THREE.MeshStandardMaterial({ map: grassTex(dry), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 1 });
+    const mat = addWind(new THREE.MeshStandardMaterial({ map: grassTex(dry), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 1 }), { amp: dry ? 0.05 : 0.08, freq: 1.7, weight: 'position.y * position.y' });
     const mesh = new THREE.InstancedMesh(geo, mat, pts.length * 2);
     pts.forEach(([x, z, s], i) => {
       for (let k = 0; k < 2; k++) {
@@ -753,11 +914,150 @@ export class Decor {
     this.group.add(mesh);
   }
 
+  // Highest surface under a point (walls, roofs, raised floors) for things standing on top of the map.
+  heightAt(x, z) {
+    let top = 0;
+    for (const b of this.map.boxes) {
+      if (x >= b.min[0] && x <= b.max[0] && z >= b.min[2] && z <= b.max[2]) top = Math.max(top, b.max[1]);
+    }
+    return top;
+  }
+
+  // Flag poles on rooftops / wall tops with cloth waving in the wind.
+  // flags: [{ r, c, h?, design?, yaw? }]
+  buildFlags(flags) {
+    const poles = new Batch();
+    const knobs = new Batch();
+    flags.forEach((f, i) => {
+      const [x, z] = this.cellCenter(f.r, f.c);
+      const base = f.y ?? this.heightAt(x, z);
+      const h = f.h ?? 5;
+      tmpM.compose(tmpP.set(x, base + h / 2, z), tmpQ.identity(), tmpS.set(1, 1, 1));
+      poles.add(new THREE.CylinderGeometry(0.035, 0.05, h, 8), tmpM);
+      tmpM.compose(tmpP.set(x, base + 0.15, z), tmpQ.identity(), tmpS.set(1, 1, 1));
+      poles.add(new THREE.CylinderGeometry(0.12, 0.16, 0.3, 8), tmpM);
+      tmpM.compose(tmpP.set(x, base + h + 0.05, z), tmpQ.identity(), tmpS.set(1, 1, 1));
+      knobs.add(new THREE.SphereGeometry(0.08, 8, 6), tmpM);
+      const L = f.w ?? 1.9, H = L * 0.6;
+      const geo = new THREE.PlaneGeometry(L, H, 18, 6);
+      geo.translate(L / 2 + 0.04, 0, 0);
+      const mat = new THREE.MeshStandardMaterial({ map: flagTex(f.design || 'embassy'), side: THREE.DoubleSide, roughness: 0.85, metalness: 0 });
+      const flagU = { uFlag: { value: new THREE.Vector2(i * 1.7, L) } };
+      mat.onBeforeCompile = (sh) => {
+        sh.uniforms.uWindTime = windTime;
+        sh.uniforms.uFlag = flagU.uFlag;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nuniform float uWindTime;\nuniform vec2 uFlag; // seed, length')
+          .replace('#include <beginnormal_vertex>', `
+float fU = uv.x;
+float fPh = uWindTime * 5.2 - fU * 7.5 + position.y * 1.4 + uFlag.x;
+float fAmp = 0.13 + 0.04 * sin(uWindTime * 0.6 + uFlag.x);
+float fDz = (cos(fPh) * -7.5 * fAmp * fU + sin(fPh) * fAmp) / uFlag.y;
+vec3 objectNormal = normalize(vec3(-fDz, 0.0, 1.0));
+#ifdef USE_TANGENT
+vec3 objectTangent = vec3( tangent.xyz );
+#endif`)
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+transformed.z += sin(fPh) * fAmp * fU;
+transformed.x -= fU * 0.06 * (1.0 - cos(fPh));
+transformed.y -= fU * fU * 0.1;`);
+      };
+      mat.customProgramCacheKey = () => 'flag-cloth';
+      const cloth = new THREE.Mesh(geo, mat);
+      cloth.position.set(x, base + h - H / 2 - 0.05, z);
+      cloth.rotation.y = f.yaw ?? 0;
+      cloth.castShadow = false; // the depth pass wouldn't wave with it
+      cloth.receiveShadow = true;
+      cloth.userData.noAO = true;
+      this.group.add(cloth);
+    });
+    this.mesh(poles.build(), new THREE.MeshStandardMaterial({ color: 0xc9ccd0, metalness: 0.85, roughness: 0.3 }), { cast: true });
+    this.mesh(knobs.build(), new THREE.MeshStandardMaterial({ color: 0xd8b04a, metalness: 1, roughness: 0.25 }), { cast: false });
+  }
+
+  // Dress a raised block as a fountain: stone rim, rippling water and a spray jet.
+  // fountain: [r0, c0, r1, c1] cells of the block.
+  buildFountain([r0, c0, r1, c1]) {
+    const m = this.map;
+    const cs = m.cellSize;
+    const x0 = m.x0 + c0 * cs, x1 = m.x0 + (c1 + 1) * cs, z0 = m.z0 + r0 * cs, z1 = m.z0 + (r1 + 1) * cs;
+    const top = this.heightAt((x0 + x1) / 2, (z0 + z1) / 2);
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, w = x1 - x0, d = z1 - z0;
+    const stone = withoutVertexColors(this.tex.material(this.cfg.trim || m.mats.building || 'concrete'), 1.1);
+    const rim = new Batch();
+    const t = 0.32, rh = 0.22;
+    rim.box(w + 0.1, rh, t, cx, top + rh / 2, z0 + t / 2 - 0.05);
+    rim.box(w + 0.1, rh, t, cx, top + rh / 2, z1 - t / 2 + 0.05);
+    rim.box(t, rh, d - t * 2 + 0.1, x0 + t / 2 - 0.05, top + rh / 2, cz);
+    rim.box(t, rh, d - t * 2 + 0.1, x1 - t / 2 + 0.05, top + rh / 2, cz);
+    // tiered centre piece
+    for (const [r, h, y] of [[0.55, 0.5, 0], [1.05, 0.12, 0.5], [0.22, 0.7, 0.62], [0.55, 0.08, 1.32], [0.1, 0.25, 1.4]]) {
+      tmpM.compose(tmpP.set(cx, top + y + h / 2, cz), tmpQ.identity(), tmpS.set(1, 1, 1));
+      rim.add(new THREE.CylinderGeometry(r, r * 1.05, h, 20), tmpM);
+    }
+    const sc = stone.userData.scale || 3;
+    this.mesh(rim.build(sc), stone, { cast: true });
+    // water surface with two scrolling normal maps
+    const n1 = waterNormalTex(), n2 = n1.clone();
+    n1.repeat.set(w / 2.5, d / 2.5);
+    n2.repeat.set(w / 1.7, d / 1.7);
+    n2.needsUpdate = true;
+    const water = new THREE.MeshStandardMaterial({ color: 0x1d4a55, roughness: 0.04, metalness: 0.15, normalMap: n1, normalScale: new THREE.Vector2(0.35, 0.35), envMapIntensity: 1.6, transparent: true, opacity: 0.88 });
+    water.onBeforeCompile = (sh) => {
+      sh.uniforms.normalMap2 = { value: n2 };
+      sh.uniforms.normalMap2Transform = { value: n2.matrix };
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform mat3 normalMap2Transform;\nvarying vec2 vNormalMap2Uv;')
+        .replace('#include <uv_vertex>', '#include <uv_vertex>\nvNormalMap2Uv = ( normalMap2Transform * vec3( uv, 1 ) ).xy;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform sampler2D normalMap2;\nvarying vec2 vNormalMap2Uv;')
+        .replace('#include <normal_fragment_maps>', `
+vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;
+vec3 mapN2 = texture2D( normalMap2, vNormalMap2Uv ).xyz * 2.0 - 1.0;
+mapN = normalize( vec3( mapN.xy + mapN2.xy, mapN.z * mapN2.z ) );
+mapN.xy *= normalScale;
+normal = normalize( tbn * mapN );`);
+    };
+    const wgeo = new THREE.PlaneGeometry(w - t * 2 + 0.1, d - t * 2 + 0.1);
+    wgeo.rotateX(-Math.PI / 2);
+    const wm = new THREE.Mesh(wgeo, water);
+    wm.position.set(cx, top + 0.13, cz);
+    wm.receiveShadow = true;
+    wm.userData.noAO = true;
+    this.group.add(wm);
+    // spray: droplets arcing out of the top bowl
+    const drops = [];
+    for (let i = 0; i < 240; i++) {
+      const a = hash2(i, 5) * Math.PI * 2, sp = 0.3 + hash2(i, 9) * 0.45;
+      drops.push([Math.cos(a) * sp, Math.sin(a) * sp, 2.1 + hash2(i, 13) * 0.9, hash2(i, 17)]);
+    }
+    const sgeo = new THREE.BufferGeometry();
+    sgeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(drops.length * 3), 3));
+    const smat = new THREE.PointsMaterial({ color: 0xdff4ff, size: 0.06, map: dropTex(), transparent: true, opacity: 0.7, depthWrite: false });
+    const spray = new THREE.Points(sgeo, smat);
+    spray.frustumCulled = false;
+    spray.userData.noAO = true;
+    this.group.add(spray);
+    this.animated.push({ type: 'water', tex: n1, tex2: n2, spray, drops, x: cx, y: top + 1.65, z: cz });
+  }
+
+  buildSkyline(style) {
+    this.skyline = new Skyline(this.map, style);
+    this.group.add(this.skyline.group);
+  }
+
   update(dt, t) {
+    windTime.value = t;
+    this.skyline?.update(t);
     for (const a of this.animated) {
-      if (a.type === 'sway') {
-        a.mesh.rotation.z = Math.sin(t * 0.7) * 0.004;
-        a.mesh.updateMatrix();
+      if (a.type === 'water') {
+        a.tex.offset.set(t * 0.021, t * 0.013);
+        a.tex2.offset.set(-t * 0.017, t * 0.024);
+        a.tex2.updateMatrix();
+        const P = a.spray.geometry.attributes.position;
+        a.drops.forEach(([vx, vz, v0, ph], i) => {
+          const life = ((t * 0.9 + ph) % 1 + 1) % 1 * 1.1;
+          P.setXYZ(i, a.x + vx * life, a.y + v0 * life - 4.9 * life * life, a.z + vz * life);
+        });
+        P.needsUpdate = true;
       } else if (a.type === 'flames') {
         a.flames.forEach(([x, y, z], i) => {
           for (let k = 0; k < 2; k++) {

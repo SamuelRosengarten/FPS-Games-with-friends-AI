@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { createWeaponModel } from './models.js';
+import { gunMaps, projectUV } from './gunmats.js';
 import { WEAPONS } from '../shared/weapons.js';
 
 const HIP = {
@@ -109,16 +110,24 @@ export class ViewModel {
     const arms = new THREE.Group();
     arms.name = 'arms';
     const sleeveCol = new THREE.Color(look.uniform).multiplyScalar(0.85);
-    const sleeve = new THREE.MeshStandardMaterial({ color: sleeveCol, roughness: 0.9 });
-    const sleeveDark = new THREE.MeshStandardMaterial({ color: sleeveCol.clone().multiplyScalar(0.75), roughness: 0.9 });
-    const glove = new THREE.MeshStandardMaterial({ color: look.gloves, roughness: 0.7 });
-    const knuckle = new THREE.MeshStandardMaterial({ color: new THREE.Color(look.gloves).multiplyScalar(1.6), roughness: 0.6 });
+    const fab = gunMaps().fabric;
+    const cloth = (color, rough = 0.9) => {
+      const mtl = new THREE.MeshStandardMaterial({ color, roughness: rough / 0.8, normalMap: fab.normalMap, roughnessMap: fab.roughnessMap });
+      mtl.normalScale.set(0.8, 0.8);
+      return mtl;
+    };
+    const sleeve = cloth(sleeveCol);
+    const sleeveDark = cloth(sleeveCol.clone().multiplyScalar(0.75));
+    const glove = cloth(new THREE.Color(look.gloves), 0.75);
+    const knuckle = cloth(new THREE.Color(look.gloves).multiplyScalar(1.7).lerp(new THREE.Color(0x3a3a36), 0.3), 0.55);
     const accent = new THREE.MeshStandardMaterial({ color: look.accent ?? 0x444444, roughness: 0.7 });
+    const watchMat = new THREE.MeshStandardMaterial({ color: 0x1b1c1e, metalness: 0.6, roughness: 0.35 });
+    const faceMat = new THREE.MeshStandardMaterial({ color: 0x101820, metalness: 0.2, roughness: 0.1, emissive: 0x0a3a2a, emissiveIntensity: 0.6 });
     const up = new THREE.Vector3(0, 1, 0);
     const seg = (a, b, r0, r1, mat) => {
       const dir = b.clone().sub(a);
       const len = dir.length();
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r0, len, 14, 1), mat);
+      const m = new THREE.Mesh(projectUV(new THREE.CylinderGeometry(r1, r0, len, 14, 1), 0.05), mat);
       m.position.copy(a).addScaledVector(dir, 0.5);
       m.quaternion.setFromUnitVectors(up, dir.normalize());
       arms.add(m);
@@ -127,21 +136,52 @@ export class ViewModel {
       arms.add(j);
       return m;
     };
-    // hand: a glove block with a thumb and wrapped fingers, oriented along the forearm
+    // hand: gloved palm, four fingers curled around the grip, thumb and knuckle pads, oriented along the forearm
+    const bone = (parent, a, b, r, mat) => {
+      const d = b.clone().sub(a);
+      const m = new THREE.Mesh(projectUV(new THREE.CapsuleGeometry(r, Math.max(0.001, d.length()), 3, 8), 0.04), mat);
+      m.position.copy(a).addScaledVector(d, 0.5);
+      m.quaternion.setFromUnitVectors(up, d.normalize());
+      parent.add(m);
+      return m;
+    };
     const addHand = (wrist, palm, left) => {
       const dir = palm.clone().sub(wrist).normalize();
       const q = new THREE.Quaternion().setFromUnitVectors(up, dir);
       const hand = new THREE.Group();
       hand.position.copy(palm);
       hand.quaternion.copy(q);
-      hand.add(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.078, 0.062), glove));
-      const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.045, 0.026), knuckle);
-      fingers.position.set(0, 0.03, left ? 0.04 : -0.04);
-      hand.add(fingers);
-      const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.012, 0.035, 3, 8), glove);
-      thumb.position.set(left ? 0.03 : -0.03, 0.015, 0);
-      thumb.rotation.z = left ? -0.6 : 0.6;
-      hand.add(thumb);
+      const zs = left ? 1 : -1; // side the fingers wrap towards
+      const palmM = new THREE.Mesh(projectUV(new THREE.CapsuleGeometry(0.024, 0.03, 4, 10), 0.04), glove);
+      palmM.scale.set(1.05, 1, 0.72);
+      palmM.position.set(0, -0.004, -zs * 0.004);
+      hand.add(palmM);
+      // back-of-hand armour plate
+      const plate = new THREE.Mesh(projectUV(new THREE.CapsuleGeometry(0.016, 0.018, 3, 8), 0.04), knuckle);
+      plate.scale.set(1.2, 1, 0.35);
+      plate.position.set(0, 0.005, -zs * -0.016);
+      hand.add(plate);
+      for (let f = 0; f < 4; f++) {
+        const x = -0.019 + f * 0.0127;
+        const r = f === 3 ? 0.0062 : 0.0072;
+        const len = f === 0 || f === 3 ? 0.86 : 1;
+        const k = new THREE.Vector3(x, 0.036, 0);
+        const j1 = new THREE.Vector3(x, 0.036 + 0.02 * len, zs * 0.012);
+        const j2 = new THREE.Vector3(x, 0.042 + 0.012 * len, zs * 0.032 * len);
+        const tip = new THREE.Vector3(x, 0.03, zs * 0.045 * len);
+        bone(hand, k, j1, r, glove);
+        bone(hand, j1, j2, r * 0.95, glove);
+        bone(hand, j2, tip, r * 0.9, glove);
+        const pad = new THREE.Mesh(new THREE.SphereGeometry(r * 1.15, 8, 6), knuckle);
+        pad.scale.set(1, 0.8, 0.6);
+        pad.position.set(x, 0.037, -zs * 0.006);
+        hand.add(pad);
+      }
+      const t0 = new THREE.Vector3(left ? -0.024 : 0.024, -0.006, zs * 0.008);
+      const t1 = new THREE.Vector3(left ? -0.03 : 0.03, 0.018, zs * 0.03);
+      const t2 = new THREE.Vector3(left ? -0.022 : 0.022, 0.036, zs * 0.046);
+      bone(hand, t0, t1, 0.0085, glove);
+      bone(hand, t1, t2, 0.0078, glove);
       arms.add(hand);
     };
     const addArm = (palm, elbow, shoulder, left) => {
@@ -155,6 +195,32 @@ export class ViewModel {
       cuff.position.copy(cuffPos);
       cuff.quaternion.setFromUnitVectors(up, wrist.clone().sub(e).normalize());
       arms.add(cuff);
+      // fabric folds up the forearm
+      for (let i = 1; i <= 2; i++) {
+        const fp = wrist.clone().add(e.clone().sub(wrist).multiplyScalar(0.25 + i * 0.18));
+        const fold = new THREE.Mesh(new THREE.TorusGeometry(0.041 + i * 0.002, 0.0045, 6, 16), sleeve);
+        fold.position.copy(fp);
+        fold.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), wrist.clone().sub(e).normalize());
+        arms.add(fold);
+      }
+      if (left) {
+        // wristwatch on the support arm
+        const wp = wrist.clone().add(e.clone().sub(wrist).normalize().multiplyScalar(0.058));
+        const wd = wrist.clone().sub(e).normalize();
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.0395, 0.0395, 0.014, 16, 1, true), watchMat);
+        band.position.copy(wp);
+        band.quaternion.setFromUnitVectors(up, wd);
+        arms.add(band);
+        const face = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.008, 16), watchMat);
+        const side = new THREE.Vector3(0, 1, 0).cross(wd).normalize();
+        face.position.copy(wp).addScaledVector(up.clone().sub(wd.clone().multiplyScalar(up.dot(wd))).normalize(), 0.04).addScaledVector(side, 0.004);
+        face.quaternion.setFromUnitVectors(up, up.clone().sub(wd.clone().multiplyScalar(up.dot(wd))).normalize());
+        arms.add(face);
+        const glass = new THREE.Mesh(new THREE.CircleGeometry(0.0105, 16), faceMat);
+        glass.position.copy(face.position).addScaledVector(face.up.clone().applyQuaternion(face.quaternion), 0.0042);
+        glass.quaternion.copy(face.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2));
+        arms.add(glass);
+      }
       addHand(wrist, p, left);
     };
     const grip = info.grip || [0, 0, 0];

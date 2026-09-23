@@ -4,32 +4,47 @@ import * as THREE from 'three';
 import { WEAPONS } from '../shared/weapons.js';
 import { PLAYER } from '../shared/constants.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { gunMaps, projectUV } from './gunmats.js';
 
 const matCache = new Map();
 function mat(key, params) {
   if (!matCache.has(key)) matCache.set(key, new THREE.MeshStandardMaterial(params));
   return matCache.get(key);
 }
+// Surface detail maps; roughness maps multiply the material roughness, so divide by their average.
+const SURF = { metal: 0.42, polymer: 0.66, wood: 0.52, fabric: 0.8 };
+function detailed(key, params, kind) {
+  if (matCache.has(key)) return matCache.get(key);
+  const maps = gunMaps()[kind];
+  const m = new THREE.MeshStandardMaterial({ ...params, ...maps });
+  if (maps.roughnessMap) m.roughness = Math.min(1, params.roughness / SURF[kind]);
+  m.normalScale.set(0.7, 0.7);
+  matCache.set(key, m);
+  return m;
+}
 const M = {
-  gunmetal: () => mat('gunmetal', { color: 0x2a2c30, metalness: 0.75, roughness: 0.38 }),
-  steel: () => mat('steel', { color: 0x8d9299, metalness: 0.9, roughness: 0.28 }),
-  blade: () => mat('blade', { color: 0xc8ccd2, metalness: 1, roughness: 0.18 }),
-  polymer: () => mat('polymer', { color: 0x1c1d1f, metalness: 0.05, roughness: 0.72 }),
-  wood: () => mat('wood', { color: 0x7a4a24, metalness: 0, roughness: 0.55 }),
+  gunmetal: () => detailed('gunmetal', { color: 0x2a2c30, metalness: 0.75, roughness: 0.38 }, 'metal'),
+  steel: () => detailed('steel', { color: 0x8d9299, metalness: 0.9, roughness: 0.3 }, 'metal'),
+  blade: () => detailed('blade', { color: 0xc8ccd2, metalness: 1, roughness: 0.2 }, 'metal'),
+  polymer: () => detailed('polymer', { color: 0x1c1d1f, metalness: 0.05, roughness: 0.72 }, 'polymer'),
+  wood: () => detailed('wood', { color: 0x8a5228, metalness: 0, roughness: 0.5 }, 'wood'),
   brass: () => mat('brass', { color: 0xc9a14a, metalness: 1, roughness: 0.3 }),
   glass: () => mat('glass', { color: 0x223344, metalness: 0.9, roughness: 0.05, emissive: 0x0a1a2a }),
   red: () => mat('reddot', { color: 0xff2020, emissive: 0xff2020, emissiveIntensity: 3 }),
-  rubber: () => mat('rubber', { color: 0x151515, metalness: 0, roughness: 0.9 }),
-  color: (hex, metal = 0.35, rough = 0.5) => mat(`c${hex}_${metal}_${rough}`, { color: hex, metalness: metal, roughness: rough }),
+  rubber: () => detailed('rubber', { color: 0x161616, metalness: 0, roughness: 0.9 }, 'rubber'),
+  color: (hex, metal = 0.35, rough = 0.5) => detailed(`c${hex}_${metal}_${rough}`, { color: hex, metalness: metal, roughness: rough }, metal >= 0.4 ? 'metal' : 'polymer'),
 };
 
+// Weapon parts: chamfered edges (they catch highlights) and metre-scaled UVs for the detail maps.
 function box(w, h, d, material, x = 0, y = 0, z = 0) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  const mn = Math.min(w, h, d);
+  const geo = mn >= 0.008 ? new RoundedBoxGeometry(w, h, d, 1, Math.min(0.0035, mn * 0.2)) : new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.Mesh(projectUV(geo), material);
   m.position.set(x, y, z);
   return m;
 }
 function cyl(r, len, material, x = 0, y = 0, z = 0, axis = 'z', seg = 14, r2 = r) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r2, r, len, seg), material);
+  const m = new THREE.Mesh(projectUV(new THREE.CylinderGeometry(r2, r, len, seg)), material);
   if (axis === 'z') m.rotation.x = Math.PI / 2;
   else if (axis === 'x') m.rotation.z = Math.PI / 2;
   m.position.set(x, y, z);
@@ -166,87 +181,139 @@ function buildSMG(o) {
 
 function buildRifle(o) {
   const g = new THREE.Group();
-  const L = o.len;
   const ak = o.style === 'ak';
-  const m4 = o.style === 'm4';
   const body = M.color(o.body, 0.6, 0.4);
+  const dark = M.gunmetal();
   const furniture = ak ? M.wood() : M.color(o.accent, 0.2, 0.6);
-  g.add(box(0.05, 0.07, 0.42, body, 0, 0.045, -0.12));
-  // barrel & handguard
-  g.add(cyl(0.011, 0.38, M.gunmetal(), 0, 0.055, -0.53));
-  g.add(box(0.056, 0.06, 0.26, furniture, 0, 0.048, -0.43));
-  if (!ak) g.add(box(0.03, 0.012, 0.26, M.gunmetal(), 0, 0.082, -0.43));
-  g.add(cyl(0.017, 0.06, M.gunmetal(), 0, 0.055, -0.74));
-  // front sight / gas block
-  g.add(box(0.005, 0.04, 0.01, M.gunmetal(), 0, 0.08, -0.66));
-  g.add(box(0.024, 0.03, 0.03, M.gunmetal(), 0, 0.062, -0.66));
-  // muzzle device with ports
-  g.add(cyl(0.015, 0.05, M.gunmetal(), 0, 0.055, -0.775));
-  for (let i = 0; i < 3; i++) g.add(box(0.032, 0.006, 0.004, M.polymer(), 0, 0.055, -0.76 - i * 0.012));
-  // receiver details: ejection port, charging handle, magwell, trigger guard
-  g.add(box(0.052, 0.018, 0.06, M.polymer(), 0.001, 0.058, -0.06));
-  g.add(box(0.012, 0.012, 0.03, M.steel(), 0.032, 0.066, ak ? -0.05 : 0.07));
-  g.add(box(0.044, 0.04, 0.07, body, 0, 0.0, -0.12));
-  g.add(box(0.008, 0.008, 0.07, M.gunmetal(), 0, -0.012, -0.03));
-  const trig = box(0.005, 0.02, 0.005, M.steel(), 0, 0.0, -0.04);
-  trig.rotation.x = 0.3;
-  g.add(trig);
-  if (m4 || o.style === 'marauder') for (let i = 0; i < 9; i++) g.add(box(0.034, 0.006, 0.012, M.gunmetal(), 0, 0.09, -0.32 - i * 0.026));
-  if (ak) { g.add(box(0.058, 0.01, 0.2, M.wood(), 0, 0.083, -0.45)); g.add(cyl(0.012, 0.25, M.gunmetal(), 0, 0.09, -0.3)); }
-  // grip
-  const grip = box(0.03, 0.11, 0.045, ak ? M.wood() : M.polymer(), 0, -0.035, 0.03);
-  grip.rotation.x = 0.28;
-  g.add(grip);
-  // stock (hidden in first person while aiming)
+  const add = (m, rx = 0, ry = 0, rz = 0) => { if (rx || ry || rz) m.rotation.set(rx, ry, rz); g.add(m); return m; };
   const stock = new THREE.Group();
   stock.name = 'stock';
-  if (ak) {
-    const st = box(0.045, 0.07, 0.26, M.wood(), 0, 0.012, 0.2);
-    st.rotation.x = 0.12;
-    stock.add(st);
-  } else {
-    stock.add(cyl(0.017, 0.2, M.polymer(), 0, 0.045, 0.16));
-    stock.add(box(0.05, 0.085, 0.1, M.polymer(), 0, 0.02, 0.25));
-  }
-  g.add(stock);
-  // magazine
   const mag = new THREE.Group();
-  if (ak) {
-    const m1 = box(0.03, 0.1, 0.05, body, 0, -0.04, 0);
-    const m2 = box(0.03, 0.1, 0.05, body, 0, -0.12, 0.02);
-    m2.rotation.x = -0.35;
-    mag.add(m1, m2);
-    m1.material = M.color(0x5a3520, 0.2, 0.5);
-    m2.material = m1.material;
-  } else {
-    mag.add(box(0.028, 0.17, 0.05, M.gunmetal(), 0, -0.07, 0));
-  }
-  mag.position.set(0, 0.01, -0.12);
   mag.name = 'mag';
-  g.add(mag);
-  // top: optic or rear sight
-  if (m4 || o.style === 'marauder') {
-    g.add(box(0.03, 0.012, 0.3, M.gunmetal(), 0, 0.085, -0.12));
-    const optic = new THREE.Group();
-    // hollow red-dot: base, two side plates, top plate, see-through lens, emissive dot
-    optic.add(box(0.034, 0.008, 0.07, M.polymer(), 0, 0.089, -0.06));
-    optic.add(box(0.005, 0.03, 0.07, M.polymer(), 0.0145, 0.106, -0.06));
-    optic.add(box(0.005, 0.03, 0.07, M.polymer(), -0.0145, 0.106, -0.06));
-    optic.add(box(0.034, 0.005, 0.07, M.polymer(), 0, 0.1225, -0.06));
-    const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.024, 0.026), mat('lens-glass', { color: 0x88ccaa, metalness: 0.2, roughness: 0.05, transparent: true, opacity: 0.18, depthWrite: false }));
-    lens.position.set(0, 0.106, -0.094);
-    optic.add(lens);
-    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0011, 8, 6), M.red());
-    dot.position.set(0, 0.108, -0.093);
-    dot.name = 'reddot';
-    optic.add(dot);
-    g.add(optic);
-    return finish(g, { muzzle: [0, 0.055, -0.78], eject: [0.03, 0.06, -0.08], sightY: 0.108, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
+  if (ak) {
+    // receiver: lower body, domed dust cover with ribs, trunnion, rivets, selector lever
+    add(box(0.046, 0.05, 0.36, body, 0, 0.032, -0.12));
+    add(box(0.044, 0.026, 0.3, body, 0, 0.068, -0.08));
+    for (let i = 0; i < 4; i++) add(box(0.047, 0.004, 0.006, dark, 0, 0.068, 0.04 + i * 0.012));
+    add(box(0.049, 0.058, 0.045, body, 0, 0.04, -0.31));
+    for (const [y, z] of [[0.02, -0.3], [0.05, -0.3], [0.02, -0.16], [0.01, 0.02], [0.04, 0.02]]) add(cyl(0.0032, 0.05, M.steel(), 0, y, z, 'x', 8));
+    add(box(0.003, 0.014, 0.1, M.steel(), 0.025, 0.05, -0.04), 0.06);
+    add(box(0.012, 0.018, 0.012, M.steel(), 0.028, 0.068, -0.03)); // charging handle
+    // wooden handguards around the gas tube, gas block, barrel, front sight, slant brake
+    add(box(0.054, 0.042, 0.2, furniture, 0, 0.036, -0.43));
+    for (let i = 0; i < 3; i++) add(box(0.056, 0.004, 0.16, M.color(0x3a2212, 0, 0.8), 0, 0.02 + i * 0.012, -0.43));
+    add(box(0.044, 0.026, 0.19, furniture, 0, 0.078, -0.44));
+    add(cyl(0.0095, 0.08, dark, 0, 0.078, -0.57));
+    add(box(0.028, 0.036, 0.03, dark, 0, 0.066, -0.62));
+    add(cyl(0.0085, 0.34, dark, 0, 0.055, -0.66));
+    add(box(0.022, 0.022, 0.03, dark, 0, 0.07, -0.72));
+    add(box(0.004, 0.028, 0.008, dark, 0.009, 0.092, -0.72));
+    add(box(0.004, 0.028, 0.008, dark, -0.009, 0.092, -0.72));
+    add(box(0.003, 0.02, 0.004, dark, 0, 0.09, -0.72));
+    add(cyl(0.013, 0.045, dark, 0, 0.055, -0.8));
+    add(box(0.028, 0.012, 0.02, M.polymer(), 0, 0.066, -0.815), 0.5);
+    // rear sight block and leaf
+    add(box(0.03, 0.018, 0.04, dark, 0, 0.09, -0.3));
+    add(box(0.024, 0.004, 0.06, dark, 0, 0.1, -0.27), -0.05);
+    add(box(0.005, 0.008, 0.004, dark, 0, 0.106, -0.245));
+    // trigger guard + trigger
+    add(box(0.007, 0.004, 0.07, M.steel(), 0, -0.017, -0.03));
+    add(box(0.007, 0.03, 0.005, M.steel(), 0, -0.004, -0.064));
+    add(box(0.005, 0.02, 0.005, M.steel(), 0, -0.002, -0.04), 0.3);
+    // wooden pistol grip
+    add(box(0.03, 0.11, 0.042, furniture, 0, -0.04, 0.03), 0.3);
+    // curved "banana" magazine: one extruded side profile (x of the shape = -z of the gun)
+    const mm = M.color(0x6a3c1e, 0.2, 0.5);
+    const prof = new THREE.Shape();
+    prof.moveTo(0.026, 0);
+    prof.lineTo(-0.026, 0);
+    prof.quadraticCurveTo(-0.012, -0.1, 0.035, -0.185);
+    prof.lineTo(0.088, -0.17);
+    prof.quadraticCurveTo(0.03, -0.09, 0.026, 0);
+    const mgeo = new THREE.ExtrudeGeometry(prof, { depth: 0.026, bevelEnabled: true, bevelThickness: 0.002, bevelSize: 0.002, bevelSegments: 1, curveSegments: 10 });
+    mgeo.rotateY(Math.PI / 2);
+    mgeo.translate(-0.013, 0, 0);
+    mag.add(new THREE.Mesh(projectUV(mgeo), mm));
+    for (let i = 0; i < 3; i++) {
+      const rib = box(0.03, 0.005, 0.04, mm, 0, -0.045 - i * 0.045, -0.006 - i * i * 0.006 - i * 0.008);
+      rib.rotation.x = 0.15 + i * 0.14;
+      mag.add(rib);
+    }
+    mag.position.set(0, 0.01, -0.115);
+    // wooden stock with steel butt plate
+    const st = box(0.042, 0.062, 0.24, furniture, 0, 0.012, 0.2);
+    st.rotation.x = 0.1;
+    stock.add(st);
+    const heel = box(0.044, 0.1, 0.06, furniture, 0, -0.012, 0.3);
+    heel.rotation.x = 0.1;
+    stock.add(heel);
+    const plate = box(0.046, 0.104, 0.008, M.steel(), 0, -0.014, 0.332);
+    plate.rotation.x = 0.1;
+    stock.add(plate);
+    g.add(stock);
+    g.add(mag);
+    return finish(g, { muzzle: [0, 0.055, -0.83], eject: [0.03, 0.06, -0.08], sightY: 0.1, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
   }
-  g.add(box(0.03, 0.008, 0.04, M.gunmetal(), 0, 0.084, -0.04));
-  g.add(box(0.008, 0.016, 0.01, M.gunmetal(), 0.01, 0.094, -0.04));
-  g.add(box(0.008, 0.016, 0.01, M.gunmetal(), -0.01, 0.094, -0.04));
-  return finish(g, { muzzle: [0, 0.055, -0.78], eject: [0.03, 0.06, -0.08], sightY: 0.1, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
+  // AR platform: upper/lower receivers, rails, M-LOK handguard, forward assist, buffer tube stock
+  add(box(0.044, 0.05, 0.2, body, 0, 0.02, -0.07));
+  add(box(0.05, 0.052, 0.085, body, 0, -0.002, -0.12));
+  add(box(0.046, 0.04, 0.22, body, 0, 0.064, -0.08));
+  add(box(0.03, 0.012, 0.36, dark, 0, 0.09, -0.16));
+  for (let i = 0; i < 12; i++) add(box(0.034, 0.006, 0.01, dark, 0, 0.097, -0.01 - i * 0.026));
+  add(cyl(0.009, 0.03, body, 0.029, 0.066, 0.0));
+  add(box(0.04, 0.008, 0.024, M.polymer(), 0, 0.078, 0.04));
+  add(box(0.002, 0.02, 0.055, dark, 0.024, 0.062, -0.05));
+  add(box(0.004, 0.012, 0.024, M.steel(), 0.024, 0.042, -0.1));
+  // handguard with slots
+  add(box(0.054, 0.054, 0.3, furniture, 0, 0.058, -0.36));
+  for (const sx of [-1, 1]) for (let i = 0; i < 5; i++) add(box(0.002, 0.012, 0.03, M.rubber(), sx * 0.0275, 0.052, -0.26 - i * 0.045));
+  for (let i = 0; i < 5; i++) add(box(0.02, 0.002, 0.03, M.rubber(), 0, 0.0305, -0.26 - i * 0.045));
+  add(cyl(0.0085, 0.18, dark, 0, 0.058, -0.6));
+  add(box(0.024, 0.03, 0.025, dark, 0, 0.066, -0.53));
+  // flash hider with prongs
+  add(cyl(0.012, 0.03, dark, 0, 0.058, -0.705));
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + Math.PI / 4;
+    add(box(0.006, 0.006, 0.03, dark, Math.cos(a) * 0.009, 0.058 + Math.sin(a) * 0.009, -0.735));
+  }
+  // trigger guard, trigger, grip
+  add(box(0.007, 0.004, 0.065, M.polymer(), 0, -0.012, -0.03));
+  add(box(0.005, 0.02, 0.005, M.steel(), 0, 0.002, -0.04), 0.3);
+  add(box(0.03, 0.105, 0.044, M.polymer(), 0, -0.036, 0.03), 0.3);
+  for (let i = 0; i < 3; i++) add(box(0.031, 0.01, 0.006, M.rubber(), 0, -0.02 - i * 0.022, 0.01 - i * 0.007), 0.3);
+  // slightly curved magazine with base plate
+  const m1 = box(0.025, 0.09, 0.056, M.gunmetal(), 0, -0.035, 0.0);
+  const m2 = box(0.025, 0.08, 0.056, M.gunmetal(), 0, -0.112, 0.012);
+  m2.rotation.x = -0.18;
+  const base = box(0.03, 0.01, 0.062, M.polymer(), 0, -0.152, 0.02);
+  base.rotation.x = -0.18;
+  mag.add(m1, m2, base);
+  for (let i = 0; i < 3; i++) mag.add(box(0.026, 0.004, 0.044, M.gunmetal(), 0, -0.02 - i * 0.03, -0.001));
+  mag.position.set(0, 0.0, -0.12);
+  // buffer tube and adjustable stock
+  stock.add(cyl(0.013, 0.2, dark, 0, 0.058, 0.13));
+  for (let i = 0; i < 5; i++) stock.add(box(0.004, 0.006, 0.006, M.steel(), 0, 0.044, 0.08 + i * 0.022));
+  stock.add(box(0.044, 0.07, 0.13, M.polymer(), 0, 0.045, 0.23));
+  stock.add(box(0.036, 0.022, 0.1, M.polymer(), 0, 0.085, 0.22));
+  stock.add(box(0.046, 0.09, 0.014, M.rubber(), 0, 0.04, 0.298));
+  g.add(stock);
+  g.add(mag);
+  // red-dot optic on the rail
+  const optic = new THREE.Group();
+  optic.add(box(0.034, 0.008, 0.07, M.polymer(), 0, 0.089, -0.06));
+  optic.add(box(0.005, 0.03, 0.07, M.polymer(), 0.0145, 0.106, -0.06));
+  optic.add(box(0.005, 0.03, 0.07, M.polymer(), -0.0145, 0.106, -0.06));
+  optic.add(box(0.034, 0.005, 0.07, M.polymer(), 0, 0.1225, -0.06));
+  optic.add(cyl(0.006, 0.012, M.polymer(), 0.02, 0.108, -0.05, 'x', 10));
+  const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.024, 0.026), mat('lens-glass', { color: 0x88ccaa, metalness: 0.2, roughness: 0.05, transparent: true, opacity: 0.18, depthWrite: false }));
+  lens.position.set(0, 0.106, -0.094);
+  optic.add(lens);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.0011, 8, 6), M.red());
+  dot.position.set(0, 0.108, -0.093);
+  dot.name = 'reddot';
+  optic.add(dot);
+  g.add(optic);
+  return finish(g, { muzzle: [0, 0.058, -0.75], eject: [0.03, 0.06, -0.08], sightY: 0.108, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
 }
 
 function buildShotgun(o) {
