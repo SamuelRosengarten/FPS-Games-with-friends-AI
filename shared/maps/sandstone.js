@@ -112,6 +112,9 @@ export default {
     { r: 3, c: 11, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
   ],
   decor: {
+    wallProps: { ac: 0.05, ebox: 0.03, pipe: 0.035, vent: 0.02 },
+    clutter: { rocks: 80, trash: 14, cans: 8, pots: 10, jerry: 3 },
+    rockColor: 0x9c8466,
     skyline: 'desert',
     flags: [{ r: 13, c: 17, h: 4, design: 'desert' }, { r: 13, c: 22, h: 4, design: 'desert' }],
     trim: 'sandstoneLight',

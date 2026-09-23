@@ -151,6 +151,8 @@ export default {
     { r: 20, c: 19, level: 'upper', color: 0xfff0d8, intensity: 8, distance: 22 },
   ],
   decor: {
+    wallProps: { ac: 0.06, ebox: 0.03, pipe: 0.05, vent: 0.03 },
+    clutter: { rocks: 20, trash: 10, cans: 6, pots: 6 },
     skyline: 'city',
     fountain: [29, 18, 30, 21],
     flags: [{ r: 23, c: 17, h: 4.5 }, { r: 23, c: 22, h: 4.5 }, { r: 35, c: 18, h: 4, design: 'embassy' }, { r: 35, c: 21, h: 4, design: 'embassy' }],

@@ -552,13 +552,28 @@ export function addMacroVariation(m, pomScale = 0) {
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = clamp(roughnessFactor * mix(0.86, 1.1, macroN2), 0.04, 1.0);`);
     if (pomScale) pomPatch(sh, pomScale);
+    specOcclusion(sh);
   };
   m.customProgramCacheKey = () => (pomScale ? 'macro-variation-pom' : 'macro-variation');
 }
 
 function addPom(m, pomScale) {
-  m.onBeforeCompile = (sh) => pomPatch(sh, pomScale);
+  m.onBeforeCompile = (sh) => { pomPatch(sh, pomScale); specOcclusion(sh); };
   m.customProgramCacheKey = () => 'pom';
+}
+
+// The baked vertex colour is an ambient-occlusion term (interiors, wall bases); apply it to the sky
+// reflections too so glossy floors indoors don't mirror a bright sky.
+function specOcclusion(sh) {
+  sh.fragmentShader = sh.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
+    #ifdef USE_COLOR
+      reflectedLight.indirectSpecular *= mix(1.0, smoothstep(0.35, 1.0, vColor.g), 0.85);
+    #endif`);
+}
+
+function addSpecOcclusion(m) {
+  m.onBeforeCompile = (sh) => specOcclusion(sh);
+  m.customProgramCacheKey = () => 'spec-occlusion';
 }
 
 export class TextureLibrary {
@@ -607,6 +622,7 @@ export class TextureLibrary {
     const pom = this.size >= 1024 && d.pom ? d.pom / (d.scale || 1) : 0;
     if ((d.scale ?? 3) >= 2 && this.size >= 512) addMacroVariation(m, pom);
     else if (pom) addPom(m, pom);
+    else addSpecOcclusion(m);
     this.materials.set(name, m);
     return m;
   }

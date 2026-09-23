@@ -113,6 +113,9 @@ export default {
     { r: 26, c: 8, rows: 1, cols: 1, h: 2.1, mat: 'containerRed', inset: 0.3, kind: 'truck' },
   ],
   decor: {
+    wallProps: { ac: 0.03, ebox: 0.06, pipe: 0.05, vent: 0.04 },
+    clutter: { rocks: 30, trash: 24, cans: 12, pallets: 7, tires: 6, cones: 6, jerry: 5 },
+    pipeColor: 0x6e6a62,
     skyline: 'industrial',
     flags: [{ r: 19, c: 14, h: 5, design: 'company' }, { r: 19, c: 25, h: 5, design: 'company' }],
     trim: 'concrete',

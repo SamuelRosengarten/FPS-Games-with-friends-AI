@@ -80,6 +80,8 @@ export default {
     { r: 20, c: 20, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
   ],
   decor: {
+    wallProps: { ebox: 0.03, pipe: 0.04, vent: 0.03 },
+    clutter: { rocks: 50, trash: 8, cans: 5, tires: 4, pallets: 3 },
     skyline: 'hills',
     trim: 'concrete',
     torches: 16,
