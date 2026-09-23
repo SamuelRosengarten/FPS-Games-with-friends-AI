@@ -417,6 +417,7 @@ export const MATERIAL_DEFS = {
   containerBlue: { r: 'corrugated', opt: { color: 0x245a8c }, scale: 6, ns: 7 },
   containerGreen: { r: 'corrugated', opt: { color: 0x3d6b3a }, scale: 6, ns: 7 },
   containerYellow: { r: 'corrugated', opt: { color: 0xc49a2a }, scale: 6, ns: 7 },
+  barrel: { r: 'corrugated', opt: { color: 0xc8c8c4 }, scale: 6, ns: 4 },
   sandbag: { r: 'sandbag', scale: 2, ns: 5 },
   lamp: { r: 'lamp', scale: 0, ns: 1 },
 };

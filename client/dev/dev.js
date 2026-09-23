@@ -9,6 +9,7 @@ import { WEAPONS } from '../shared/weapons.js';
 import { TextureLibrary } from '../js/textures.js';
 import { WorldView } from '../js/world.js';
 import { Effects } from '../js/effects.js';
+import { Decor } from '../js/decor.js';
 
 const q = new URLSearchParams(location.search);
 const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false };
@@ -36,9 +37,11 @@ if (view === 'vm') {
   label.textContent = `viewmodel: ${q.get('w') || 'ar'}${q.get('ads') ? ' (ADS)' : ''}`;
 } else if (view === 'map') {
   const tex = new TextureLibrary(g.renderer, g.quality);
-  const mats = [...new Set(map.boxes.map((b) => b.mat)), 'woodPanel', 'lamp'];
+  const mats = [...new Set([...map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', map.decor?.trim || map.mats.building || 'concrete'])];
   await tex.prepare(mats);
   const wv = new WorldView(g, tex, map);
+  const decor = q.get('decor') === '0' ? null : new Decor(g, tex, map);
+  window.__decor = decor;
   const cam = (q.get('cam') || '0,1.7,0,0,0').split(',').map(Number);
   g.camera.position.set(cam[0], cam[1], cam[2]);
   g.camera.rotation.set(cam[4] || 0, cam[3] || 0, 0);
@@ -59,14 +62,19 @@ if (view === 'vm') {
   void wv;
 } else if (view === 'players') {
   const specs = [[1, 0, 0], [2, 0, 0], [1, 1, 0], [2, 0, 1], [1, 0, -1]];
+  window.__players = [];
   specs.forEach(([team, crouch, lean], i) => {
     const m = new PlayerModel(teamLook(team, i, false), `Player${i}`, true);
+    window.__players.push(m);
     m.setWeapon(['ar', 'm4', 'awp', 'smg', 'deagle'][i]);
     m.update({ x: (i - 2) * 1.4, y: 0, z: 0, yaw: Math.PI + (i - 2) * 0.35, pitch: 0, crouch, lean, speed: 0, onGround: true }, 0.016);
     g.scene.add(m.root);
   });
-  g.camera.position.set(0, 1.5, 5.5);
-  g.camera.lookAt(0, 1, 0);
+  const pc = (q.get('cam') || '0,1.5,5.5,0,1,0').split(',').map(Number);
+  g.camera.position.set(pc[0], pc[1], pc[2]);
+  g.camera.lookAt(pc[3], pc[4], pc[5]);
+  if (q.get('dead')) window.__players.forEach((m, i) => { m.die(i % 2 ? 1 : -1); for (let k = 0; k < 60; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y }, 0.016); });
+  if (q.get('reload')) window.__players.forEach((m) => { for (let k = 0; k < 20; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y, pitch: 0, crouch: 0, lean: 0, speed: 0, onGround: true, reloading: true }, 0.016); });
   label.textContent = 'player models';
 } else {
   const ids = Object.keys(WEAPONS);
@@ -86,6 +94,7 @@ function loop() {
   const dt = 1 / 60;
   t += dt;
   if (window.__fx) window.__fx.update(dt, performance.now());
+  if (window.__decor) window.__decor.update(dt, t);
   if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1 });
   g.render(dt);
   requestAnimationFrame(loop);

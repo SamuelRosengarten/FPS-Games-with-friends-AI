@@ -18,6 +18,7 @@ export default {
     raised: 'concrete', crate: 'crate', crate2: 'crateDark', low: 'sandbag', roof: 'concreteDark', destructible: 'woodPanel',
   },
   theme: {
+    grade: { gain: [0.96, 1.0, 1.05], lift: [0.0, 0.01, 0.025], contrast: 1.12, saturation: 0.9, vignette: 0.32, grain: 0.025 },
     cloudCover: 0.62, cloudColor: 0xdfe4ea,
     sky: { turbidity: 7, rayleigh: 2.2, mie: 0.006, mieG: 0.8 },
     skyTop: 0x4b5f7a, skyHorizon: 0xb9c2c9, skyBottom: 0x6d6a62,
@@ -97,10 +98,35 @@ export default {
     { r: 1, c: 26, rows: 1, cols: 3, h: 2.6, mat: 'containerGreen', inset: 0.05, kind: 'container' },
     { r: 33, c: 32, rows: 1, cols: 3, h: 2.6, mat: 'containerRed', inset: 0.05, kind: 'container' },
     { r: 33, c: 4, rows: 3, cols: 1, h: 2.6, mat: 'containerYellow', inset: 0.05, kind: 'container' },
+    // oil drums
+    { r: 20, c: 9, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
+    { r: 20, c: 30, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
+    { r: 25, c: 17, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
+    { r: 2, c: 7, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
+    { r: 12, c: 36, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
+    { r: 31, c: 8, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
+    { r: 11, c: 23, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
+    { r: 17, c: 16, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
     // truck
     { r: 26, c: 5, rows: 1, cols: 3, h: 2.7, mat: 'darkMetal', inset: 0.15, kind: 'truck' },
     { r: 26, c: 8, rows: 1, cols: 1, h: 2.1, mat: 'containerRed', inset: 0.3, kind: 'truck' },
   ],
+  decor: {
+    trim: 'concrete',
+    barbed: true,
+    lampPosts: 8,
+    wires: 6,
+    puddles: 0.07,
+    decals: ['crack', 'stain', 'leaves'],
+    glass: 0x1e2a33,
+    litWindows: 0.18,
+    signs: [
+      { r: 19, c: 10, dir: 's', text: '← B' },
+      { r: 19, c: 29, dir: 's', text: 'A →' },
+      { r: 12, c: 17, dir: 's', text: '← B', color: '#e8d23a' },
+      { r: 12, c: 22, dir: 's', text: 'A →', color: '#e8d23a' },
+    ],
+  },
   lights: [
     { r: 7, c: 12, color: 0xfff0d6, intensity: 7, distance: 16 },
     { r: 7, c: 26, color: 0xfff0d6, intensity: 7, distance: 16 },

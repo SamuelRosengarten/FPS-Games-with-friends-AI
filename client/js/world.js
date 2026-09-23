@@ -57,8 +57,10 @@ export class WorldView {
       return byMat.get(mat);
     };
 
+    const barrels = [];
     for (const b of map.boxes) {
       if (b.destructible) continue;
+      if (b.kind === 'barrel') { barrels.push(b); continue; }
       if (b.kind === 'ground') { this.buildGround(push(b.mat), b); continue; }
       const buf = push(b.mat);
       this.addBox(buf, b);
@@ -82,8 +84,44 @@ export class WorldView {
     }
 
     this.buildPanels();
+    this.buildBarrels(barrels);
     this.buildLights();
     this.buildMarkings();
+  }
+
+  // Oil drums: collision is the prop box, visuals are ribbed cylinders tinted per barrel.
+  buildBarrels(list) {
+    if (!list.length) return;
+    const body = new THREE.CylinderGeometry(0.38, 0.38, 1, 20, 1, false);
+    const pos = body.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      const rib = Math.abs(y) < 0.46 && (Math.abs(Math.abs(y) - 0.18) < 0.03) ? 1.035 : 1;
+      pos.setX(i, pos.getX(i) * rib);
+      pos.setZ(i, pos.getZ(i) * rib);
+    }
+    body.computeVertexNormals();
+    const tex = this.tex.textures('barrel');
+    const mat = new THREE.MeshStandardMaterial({ map: tex.map, normalMap: tex.normalMap, roughnessMap: tex.roughnessMap, roughness: 0.9, metalness: 0.35, color: 0xffffff });
+    const mesh = new THREE.InstancedMesh(body, mat, list.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+    const tints = [0x2f5f9e, 0x44743c, 0xd0a22e, 0xa83224, 0x7a7d80];
+    const col = new THREE.Color();
+    list.forEach((b, i) => {
+      const h = b.max[1] - b.min[1];
+      const r = Math.min(b.max[0] - b.min[0], b.max[2] - b.min[2]) / 0.76;
+      p.set((b.min[0] + b.max[0]) / 2, b.min[1] + h / 2, (b.min[2] + b.max[2]) / 2);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (b.id * 1.7) % 6.28);
+      sc.set(r, h, r);
+      m4.compose(p, q, sc);
+      mesh.setMatrixAt(i, m4);
+      mesh.setColorAt(i, col.set(tints[b.id % tints.length]));
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.group.add(mesh);
   }
 
   // Ground split into per-cell quads so it can carry baked shading.
@@ -303,7 +341,7 @@ export class WorldView {
 function letterTexture(ch) {
   const c = document.createElement('canvas');
   c.width = c.height = 256;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   g.font = '900 200px Arial, sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';

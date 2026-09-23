@@ -12,9 +12,10 @@ import { PhysicsWorld, stepPlayer, eyePosition, leanClearance, rayHitPlayer, hei
 import { materialInfo } from '../shared/materials.js';
 import { TextureLibrary } from './textures.js';
 import { WorldView } from './world.js';
+import { Decor } from './decor.js';
 import { Effects } from './effects.js';
 import { ViewModel } from './viewmodel.js';
-import { PlayerModel, teamLook, weaponTemplate } from './models.js';
+import { PlayerModel, teamLook, weaponTemplate, bakedWeapon } from './models.js';
 import { Radar, esc } from './hud.js';
 
 const SURFACE_IDX = { stone: 0, wood: 1, metal: 2, sand: 3 };
@@ -52,13 +53,16 @@ export class ClientGame {
       this.tex = new TextureLibrary(this.g.renderer, this.g.quality);
       this.tex.quality = this.g.quality;
     }
-    const mats = [...new Set(this.map.boxes.map((b) => b.mat)), 'woodPanel', 'lamp'];
+    const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
     const t0 = performance.now();
     await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}… ${Math.round(f * 100)}%`; });
     const t1 = performance.now();
     this.g.setupEnvironment(this.map);
+    const tEnv = performance.now();
     this.worldView = new WorldView(this.g, this.tex, this.map);
-    console.info(`[breachpoint] textures ${Math.round(t1 - t0)} ms, world ${Math.round(performance.now() - t1)} ms (${mats.length} materials, ${this.g.quality})`);
+    const t2 = performance.now();
+    this.decor = new Decor(this.g, this.tex, this.map);
+    console.info(`[breachpoint] textures ${Math.round(t1 - t0)} ms, env ${Math.round(tEnv - t1)} ms, world ${Math.round(t2 - tEnv)} ms, decor ${Math.round(performance.now() - t2)} ms (${mats.length} materials, ${this.g.quality}) ${JSON.stringify(this.decor.timings)}`);
     this.effects = new Effects(this.g);
     this.viewmodel = this.viewmodel || new ViewModel(this.g);
     this.viewmodel.setVisible(true);
@@ -76,6 +80,10 @@ export class ClientGame {
     this.buyEnds = 0;
     this.bomb = st.bomb;
     this.bombModel = null;
+    // created up-front: adding a light mid-round would force every lit shader to recompile (a hitch)
+    if (!this.bombLight) this.bombLight = new THREE.PointLight(0xff2020, 0, 3, 2);
+    this.bombLight.intensity = 0;
+    this.g.scene.add(this.bombLight);
     this.nextBeep = 0;
     for (const [id, x, y, z, until, start] of st.smokes || []) this.effects.addSmoke(id, [x, y, z], start, until, this.net.serverNow(), this.smokeTint());
     for (const [id, hp] of st.walls || []) this.applyWall(id, hp, false);
@@ -123,7 +131,9 @@ export class ClientGame {
     if (!this.active) return;
     this.active = false;
     this.worldView?.dispose();
+    this.decor?.dispose();
     this.effects?.dispose();
+    this.g.setHurt(0);
     for (const p of this.players.values()) this.g.scene.remove(p.model.root);
     this.players.clear();
     for (const g of this.grenades.values()) this.g.scene.remove(g.mesh);
@@ -249,7 +259,7 @@ export class ClientGame {
       seen.add(id);
       let g = this.grenades.get(id);
       if (!g) {
-        const mesh = weaponTemplate(type);
+        const mesh = bakedWeapon(type);
         mesh.scale.setScalar(1.3);
         this.g.scene.add(mesh);
         g = { mesh, snaps: [], type };
@@ -327,6 +337,7 @@ export class ClientGame {
     this.audio.hurt();
     this.w.punchPitch += Math.min(0.05, m.amt * 0.0012);
     this.shake = Math.min(1, this.shake + m.amt / 60);
+    this.hurtFlash = Math.min(1, (this.hurtFlash || 0) + 0.25 + m.amt / 60);
     this.input.rumble(0.8, 0.4, 150);
   }
 
@@ -348,7 +359,11 @@ export class ClientGame {
     if (rp) {
       rp.alive = false;
       rp.deadAt = performance.now();
-      rp.model.die(Math.random() < 0.5 ? 1 : -1);
+      // knock the body away from the killer
+      const kp = m.k === this.myId ? this.me : this.players.get(m.k)?.state;
+      const vp = rp.state;
+      if (kp && vp && m.k !== m.v && Math.hypot(vp.x - kp.x, vp.z - kp.z) > 0.1) rp.model.die(vp.x - kp.x, vp.z - kp.z);
+      else rp.model.die(Math.random() < 0.5 ? 1 : -1);
     }
     if (m.v === this.myId) {
       this.me.alive = false;
@@ -501,7 +516,7 @@ export class ClientGame {
   addDrop(d) {
     const [id, wid, x, y, z] = d;
     if (this.drops.has(id)) return;
-    const mesh = weaponTemplate(wid);
+    const mesh = bakedWeapon(wid);
     mesh.position.set(x, y + 0.035, z);
     mesh.rotation.set(0, Math.random() * Math.PI * 2, Math.PI / 2);
     if (WEAPONS[wid]?.slot === 'grenade') mesh.rotation.z = 0;
@@ -527,12 +542,10 @@ export class ClientGame {
     if (!this.bombModel) {
       this.bombModel = weaponTemplate('bomb');
       this.bombModel.scale.setScalar(1.6);
-      this.bombLight = new THREE.PointLight(0xff2020, 0, 3, 2);
-      this.bombLight.position.set(0, 0.2, 0);
-      this.bombModel.add(this.bombLight);
       this.g.scene.add(this.bombModel);
     }
     this.bombModel.position.set(b.p[0], b.p[1] + 0.065, b.p[2]);
+    this.bombLight.position.set(b.p[0], b.p[1] + 0.3, b.p[2]);
   }
 
   // ------------------------------------------------------------------ inventory helpers
@@ -624,6 +637,7 @@ export class ClientGame {
     this.updateRemotes(dt, serverNow);
     this.updateWorldObjects(dt, serverNow, now);
     this.effects.update(dt, serverNow);
+    this.decor.update(dt, now / 1000);
     this.updateCamera(dt, now, look);
     this.updateHud(dt, now, serverNow);
     if (me.alive && now - this.lastSend > 15) this.sendInput(now);
@@ -1005,16 +1019,21 @@ export class ClientGame {
       };
       const alive = !!(s.flags & FLAG.ALIVE);
       const prev = rp.state;
-      const speed = prev ? Math.hypot(s.x - prev.x, s.z - prev.z) / Math.max(dt, 1e-3) : 0;
+      const idt = 1 / Math.max(dt, 1e-3);
+      const speed = prev ? Math.hypot(s.x - prev.x, s.z - prev.z) * idt : 0;
       rp.smoothSpeed = lerp(rp.smoothSpeed || 0, Math.min(speed, 8), 0.2);
       s.speed = rp.smoothSpeed;
+      rp.svx = lerp(rp.svx || 0, prev ? clamp((s.x - prev.x) * idt, -8, 8) : 0, 0.2);
+      rp.svz = lerp(rp.svz || 0, prev ? clamp((s.z - prev.z) * idt, -8, 8) : 0, 0.2);
+      s.vx = rp.svx; s.vz = rp.svz;
+      s.reloading = !!(s.flags & FLAG.RELOAD);
       s.onGround = !!(s.flags & FLAG.GROUND);
       s.planting = !!(s.flags & FLAG.PLANT);
       s.defusing = !!(s.flags & FLAG.DEFUSE);
       s.bomb = !!(s.flags & FLAG.BOMB);
       s.alive = alive;
       if (alive && !rp.alive) { rp.model.revive(); }
-      if (!alive && rp.alive) rp.model.die(Math.random() < 0.5 ? 1 : -1);
+      if (!alive && rp.alive) rp.model.die(Math.random() < 0.5 ? 1 : -1);  // kill message missed
       rp.alive = alive;
       rp.state = s;
       const root = rp.model.root;
@@ -1206,6 +1225,10 @@ export class ClientGame {
     }
     hud.crosshair(chVisible && this.w.ads < 0.8, Math.min(60, spreadPx));
     hud.vitals(me.hp, me.armor, me.helmet, me.kit, me.inv.bomb);
+    // low-health desaturation + red vignette, with a short flash on every hit taken
+    this.hurtFlash = Math.max(0, (this.hurtFlash || 0) - dt * 1.8);
+    const low = me.alive && me.hp < 35 ? (1 - me.hp / 35) * (0.75 + 0.25 * Math.sin(now * 0.006)) : 0;
+    this.g.setHurt(me.alive ? Math.min(1, Math.max(low * 0.85, this.hurtFlash * 0.55)) : 0);
     hud.money(me.money, this.modeInfo.economy);
     const it = this.curItem();
     hud.ammo(wd?.name || '', it ? it[1] : 0, it ? it[2] : 0, wd?.mag, !!it);
@@ -1264,7 +1287,7 @@ export class ClientGame {
     if (this.radarFrame % 2 === 0) this.drawRadar();
     // flash overlay
     this.updateFlash(now);
-    hud.fps(this.settings.showFps ? `${Math.round(this.g.fps)} FPS · ${this.g.quality.toUpperCase()} · ${this.g.resolutionLabel()} · ${Math.round(this.net.rtt)}ms` : '');
+    hud.fps(this.settings.showFps ? `${this.g.perfLabel()} · CPU ${this.cpuMs?.toFixed(1) ?? '?'} ms · ping ${Math.round(this.net.rtt)} ms` : '');
     hud.netWarn(this.net.connected && performance.now() - this.net.lastMessageAt > 3000);
   }
 

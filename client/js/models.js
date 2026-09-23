@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { WEAPONS } from '../shared/weapons.js';
 import { PLAYER } from '../shared/constants.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 const matCache = new Map();
 function mat(key, params) {
@@ -394,126 +395,290 @@ const FFA_COLORS = [0xd9483b, 0x3bb4d9, 0x7ed93b, 0xd9b43b, 0xa13bd9, 0xd93b8f, 
 export function teamLook(team, id, ffa) {
   if (ffa) {
     const c = FFA_COLORS[id % FFA_COLORS.length];
-    return { uniform: 0x4d4a44, pants: 0x3a3833, vest: 0x2a2a2a, accent: c, head: 0x2a2a2a, helmet: c, gloves: 0x1c1c1c, boots: 0x222222, lens: c, balaclava: true };
+    return { uniform: 0x4d4a44, pants: 0x3a3833, vest: 0x2e2e2c, pack: 0x2b2b28, accent: c, head: 0x2a2a2a, helmet: c, gloves: 0x1c1c1c, boots: 0x222222, pads: 0x262626, lens: c, balaclava: true, ears: false };
   }
-  if (team === 1) return { uniform: 0x9c8566, pants: 0x74634a, vest: 0x4a4637, accent: 0xff8a3d, head: 0x2b2b2b, helmet: 0x5a513f, gloves: 0x2a2a2a, boots: 0x3a3025, lens: 0xff9a3d, balaclava: true };
-  return { uniform: 0x3a4b66, pants: 0x2a3548, vest: 0x1f2a38, accent: 0x4aa8ff, head: 0xc99a7a, helmet: 0x2e3a4a, gloves: 0x1a1a1a, boots: 0x1c1c1c, lens: 0x4ad0ff, balaclava: false };
+  if (team === 1) return { uniform: 0x9c8566, pants: 0x74634a, vest: 0x4a4637, pack: 0x5b513c, accent: 0xff8a3d, head: 0x2b2b2b, helmet: 0x5a513f, gloves: 0x2a2a2a, boots: 0x3a3025, pads: 0x3b3830, lens: 0xff9a3d, balaclava: true, ears: false };
+  return { uniform: 0x3a4b66, pants: 0x2a3548, vest: 0x1f2a38, pack: 0x222a33, accent: 0x4aa8ff, head: 0xc99a7a, helmet: 0x2e3a4a, gloves: 0x1a1a1a, boots: 0x1c1c1c, pads: 0x1d2229, lens: 0x4ad0ff, balaclava: false, ears: true };
 }
 
-function capsule(r, len, material) {
-  const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 10), material);
-  return m;
+// Every part of a character (and every third-person weapon) is merged into one geometry that carries
+// per-vertex colour, roughness, metalness and emissive, so they all share this single material.
+let bakedMat = null;
+export function bakedMaterial() {
+  if (bakedMat) return bakedMat;
+  bakedMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 1 });
+  bakedMat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 aMat;\nvarying vec3 vMat;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvMat = aMat;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vMat;')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = vMat.x;')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = vMat.y;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vMat.z;');
+  };
+  bakedMat.customProgramCacheKey = () => 'baked-vertex-material';
+  return bakedMat;
+}
+
+const _pm = new THREE.Matrix4();
+const _pq = new THREE.Quaternion();
+const _pe = new THREE.Euler();
+const _ps = new THREE.Vector3();
+const _pp = new THREE.Vector3();
+const _pc = new THREE.Color();
+const _pn = new THREE.Matrix3();
+const _pv = new THREE.Vector3();
+const IDENTITY = new THREE.Matrix4();
+
+class PartBuilder {
+  constructor() { this.parts = []; }
+  // geo is consumed. o: { p, r, s, rough, metal, emit }
+  add(bone, geo, color, o = {}) {
+    _pm.compose(_pp.fromArray(o.p || [0, 0, 0]), _pq.setFromEuler(_pe.fromArray([...(o.r || [0, 0, 0]), 'XYZ'])), _ps.fromArray(o.s || [1, 1, 1]));
+    geo.applyMatrix4(_pm);
+    this.parts.push({ bone, geo, color, rough: o.rough ?? 0.8, metal: o.metal ?? 0, emit: o.emit ?? 0 });
+  }
+  // Bake parts into one geometry. With bones, positions go to bind-pose space and get skin attributes.
+  build(bones = null) {
+    let nv = 0, ni = 0;
+    for (const p of this.parts) { nv += p.geo.attributes.position.count; ni += p.geo.index ? p.geo.index.count : p.geo.attributes.position.count; }
+    const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3), am = new Float32Array(nv * 3);
+    const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+    const si = bones ? new Uint16Array(nv * 4) : null, sw = bones ? new Float32Array(nv * 4) : null;
+    let o = 0, oi = 0;
+    for (const p of this.parts) {
+      const mw = p.bone ? p.bone.matrixWorld : IDENTITY;
+      _pn.getNormalMatrix(mw);
+      const P = p.geo.attributes.position, N = p.geo.attributes.normal;
+      _pc.set(p.color);
+      const bi = bones && p.bone ? Math.max(0, bones.indexOf(p.bone)) : 0;
+      for (let i = 0; i < P.count; i++) {
+        _pv.fromBufferAttribute(P, i).applyMatrix4(mw);
+        pos[(o + i) * 3] = _pv.x; pos[(o + i) * 3 + 1] = _pv.y; pos[(o + i) * 3 + 2] = _pv.z;
+        _pv.fromBufferAttribute(N, i).applyMatrix3(_pn).normalize();
+        nor[(o + i) * 3] = _pv.x; nor[(o + i) * 3 + 1] = _pv.y; nor[(o + i) * 3 + 2] = _pv.z;
+        col[(o + i) * 3] = _pc.r; col[(o + i) * 3 + 1] = _pc.g; col[(o + i) * 3 + 2] = _pc.b;
+        am[(o + i) * 3] = p.rough; am[(o + i) * 3 + 1] = p.metal; am[(o + i) * 3 + 2] = p.emit;
+        if (si) { si[(o + i) * 4] = bi; sw[(o + i) * 4] = 1; }
+      }
+      if (p.geo.index) for (let i = 0; i < p.geo.index.count; i++) idx[oi++] = o + p.geo.index.getX(i);
+      else for (let i = 0; i < P.count; i++) idx[oi++] = o + i;
+      o += P.count;
+      p.geo.dispose();
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aMat', new THREE.BufferAttribute(am, 3));
+    if (si) {
+      geo.setAttribute('skinIndex', new THREE.BufferAttribute(si, 4));
+      geo.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
+    }
+    geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.computeBoundingSphere();
+    return geo;
+  }
+}
+
+// Third-person / world weapon: the full weapon model flattened into one baked mesh (one draw call).
+const bakedWeaponCache = new Map();
+export function bakedWeapon(id) {
+  if (!bakedWeaponCache.has(id)) {
+    const src = createWeaponModel(id);
+    src.updateMatrixWorld(true);
+    const pb = new PartBuilder();
+    src.traverse((m) => {
+      if (!m.isMesh || !m.visible) return;
+      const mt = m.material;
+      const glow = mt.emissive && mt.emissiveIntensity > 0 && mt.emissive.getHex() !== 0;
+      const geo = m.geometry.clone().applyMatrix4(m.matrixWorld);
+      if (!geo.attributes.normal) geo.computeVertexNormals();
+      pb.add(null, geo, glow && mt.emissive.getHex() !== 0 && mt.color.getHex() === mt.emissive.getHex() ? mt.emissive.getHex() : mt.color.getHex(), {
+        rough: mt.roughness ?? 0.5, metal: mt.metalness ?? 0, emit: glow ? Math.min(3, mt.emissiveIntensity * (mt.emissive.r + mt.emissive.g + mt.emissive.b) / 3 * 2) : 0,
+      });
+    });
+    bakedWeaponCache.set(id, { geo: pb.build(), info: { ...src.userData } });
+  }
+  const c = bakedWeaponCache.get(id);
+  const mesh = new THREE.Mesh(c.geo, bakedMaterial());
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData = { ...c.info };
+  return mesh;
+}
+
+const RB = (w, h, d, r = 0.02) => new RoundedBoxGeometry(w, h, d, 1, Math.min(r, w / 2 - 0.001, h / 2 - 0.001, d / 2 - 0.001));
+const CAP = (r, len, seg = 10) => new THREE.CapsuleGeometry(r, len, 3, seg);
+const CYL = (rt, rb, h, seg = 12, open = false) => new THREE.CylinderGeometry(rt, rb, h, seg, 1, open);
+const SPH = (r, ws = 14, hs = 10, t0 = 0, tl = Math.PI) => new THREE.SphereGeometry(r, ws, hs, 0, Math.PI * 2, t0, tl);
+const shade = (hex, k) => _pc.set(hex).multiplyScalar(k).getHex();
+
+// Bind pose for the arms (they are driven by two-bone IK every frame).
+const ARM_POSE = { r: { up: [0.55, 0, 0.12], fore: [1.05, 0, 0] }, l: { up: [1.25, 0, -0.55], fore: [0.35, 0.1, 0] } };
+const UPPER_ARM = 0.3, FORE_ARM = 0.3;
+// Per weapon kind: where the firing hand holds the grip (model space, relative to the aim pivot at
+// shoulder height) and how far the shoulders turn (bladed stance) so the support hand reaches forward.
+const STANCE = {
+  rifle: { grip: [0.1, -0.13, -0.3], twist: -0.35 },
+  smg: { grip: [0.1, -0.12, -0.3], twist: -0.3 },
+  shotgun: { grip: [0.1, -0.13, -0.3], twist: -0.35 },
+  sniper: { grip: [0.1, -0.12, -0.28], twist: -0.38 },
+  pistol: { grip: [0.04, -0.07, -0.44], twist: -0.1 },
+  knife: { grip: [0.19, -0.26, -0.3], twist: 0, relaxed: true },
+  grenade: { grip: [0.19, -0.1, -0.26], twist: 0, relaxed: true },
+  bomb: { grip: [0.05, -0.24, -0.34], twist: 0 },
+};
+const DOWN = new THREE.Vector3(0, -1, 0);
+const UP_AXIS = new THREE.Vector3(0, 1, 0);
+const POLE = { r: new THREE.Vector3(0.9, -1, 0.35).normalize(), l: new THREE.Vector3(-0.9, -1, 0.2).normalize() };
+const RELAXED_L = new THREE.Vector3(-0.2, -0.46, -0.1);
+const _ik = { d: new THREE.Vector3(), dir: new THREE.Vector3(), perp: new THREE.Vector3(), u: new THREE.Vector3(), e: new THREE.Vector3(), f: new THREE.Vector3(), q: new THREE.Quaternion(), t: new THREE.Vector3(), v: new THREE.Vector3() };
+
+// Analytic two-bone IK in the aim bone's space: shoulder S -> target T, elbow bent towards pole.
+function solveArm(arm, T, pole) {
+  const S = arm.grp.position;
+  const a = UPPER_ARM, b = FORE_ARM;
+  const d = _ik.d.subVectors(T, S);
+  let dist = d.length();
+  const maxR = (a + b) * 0.995;
+  if (dist > maxR) { d.multiplyScalar(maxR / dist); dist = maxR; }
+  if (dist < 0.08) { d.set(0, -0.08, 0); dist = 0.08; }
+  const dir = _ik.dir.copy(d).divideScalar(dist);
+  const cosA = Math.max(-1, Math.min(1, (a * a + dist * dist - b * b) / (2 * a * dist)));
+  const sinA = Math.sqrt(1 - cosA * cosA);
+  const perp = _ik.perp.copy(pole).addScaledVector(dir, -pole.dot(dir));
+  if (perp.lengthSq() < 1e-6) perp.set(0, -1, 0);
+  perp.normalize();
+  const u = _ik.u.copy(dir).multiplyScalar(cosA).addScaledVector(perp, sinA);
+  const e = _ik.e.copy(S).addScaledVector(u, a);
+  const f = _ik.f.copy(S).add(d).sub(e).normalize();
+  arm.grp.quaternion.setFromUnitVectors(DOWN, u);
+  f.applyQuaternion(_ik.q.copy(arm.grp.quaternion).invert());
+  arm.elbow.quaternion.setFromUnitVectors(DOWN, f);
 }
 
 export class PlayerModel {
   constructor(look, name = '', showName = false) {
     const L = look;
-    const uni = M.color(L.uniform, 0, 0.85);
-    const pants = M.color(L.pants, 0, 0.85);
-    const vest = M.color(L.vest, 0.05, 0.75);
-    const accent = mat('acc' + L.accent, { color: L.accent, roughness: 0.6, emissive: L.accent, emissiveIntensity: 0.15 });
-    const gloves = M.color(L.gloves, 0, 0.8);
-    const boots = M.color(L.boots, 0, 0.8);
-    const skin = M.color(0xc99a7a, 0, 0.7);
-    const headMat = M.color(L.balaclava ? L.head : 0xc99a7a, 0, 0.8);
-    const helmetMat = M.color(L.helmet, 0.2, 0.55);
-    const lens = mat('lens' + L.lens, { color: 0x111111, metalness: 0.9, roughness: 0.1, emissive: L.lens, emissiveIntensity: 0.35 });
+    const pb = new PartBuilder();
+    const bones = [];
+    const bone = (parent, x, y, z) => {
+      const b = new THREE.Bone();
+      b.position.set(x, y, z);
+      if (parent) parent.add(b);
+      bones.push(b);
+      return b;
+    };
+    const faceCol = L.balaclava ? L.head : 0xc99a7a;
+    const dark = 0x1b1b1b;
 
-    const root = new THREE.Group();
-    const body = new THREE.Group();
-    root.add(body);
-    const hips = new THREE.Group();
-    hips.position.y = 0.92;
-    body.add(hips);
-    hips.add(box(0.34, 0.14, 0.22, pants, 0, 0, 0));
+    const body = bone(null, 0, 0, 0);
+    const hips = bone(body, 0, 0.92, 0);
+    pb.add(hips, RB(0.34, 0.17, 0.23, 0.05), L.pants);
+    pb.add(hips, RB(0.365, 0.05, 0.25, 0.015), 0x2a2620, { p: [0, 0.075, 0], rough: 0.6 });
+    pb.add(hips, RB(0.06, 0.04, 0.02, 0.006), 0x8a877e, { p: [0, 0.075, -0.13], rough: 0.35, metal: 0.8 });
+    pb.add(hips, RB(0.11, 0.11, 0.07, 0.02), L.vest, { p: [-0.14, 0.0, 0.12] });
 
     const legs = [];
     for (const side of [-1, 1]) {
-      const thigh = new THREE.Group();
-      thigh.position.set(side * 0.1, -0.03, 0);
-      const tm = capsule(0.075, 0.3, pants);
-      tm.position.y = -0.22;
-      thigh.add(tm);
-      const knee = new THREE.Group();
-      knee.position.y = -0.44;
-      const sm = capsule(0.065, 0.3, pants);
-      sm.position.y = -0.2;
-      knee.add(sm);
-      knee.add(box(0.12, 0.09, 0.22, boots, 0, -0.41, -0.035));
-      knee.add(box(0.13, 0.07, 0.07, accent, 0, -0.02, -0.05)); // knee pad accent
-      thigh.add(knee);
-      hips.add(thigh);
+      const thigh = bone(hips, side * 0.1, -0.03, 0);
+      pb.add(thigh, CAP(0.08, 0.27), L.pants, { p: [0, -0.22, 0], rough: 0.9 });
+      pb.add(thigh, RB(0.05, 0.13, 0.12, 0.015), shade(L.pants, 0.88), { p: [side * 0.075, -0.22, 0] });
+      if (side === 1) {
+        pb.add(thigh, RB(0.065, 0.17, 0.1, 0.02), L.vest, { p: [0.1, -0.13, 0.0] });
+        pb.add(thigh, RB(0.035, 0.07, 0.045, 0.008), 0x1c1d1f, { p: [0.1, -0.02, 0.02], rough: 0.7 });
+      }
+      const knee = bone(thigh, 0, -0.44, 0);
+      pb.add(knee, CAP(0.068, 0.27), L.pants, { p: [0, -0.2, 0], rough: 0.9 });
+      pb.add(knee, RB(0.12, 0.13, 0.075, 0.03), L.pads, { p: [0, -0.02, -0.06], rough: 0.6 });
+      pb.add(knee, RB(0.124, 0.022, 0.078, 0.006), L.accent, { p: [0, -0.03, -0.062], emit: 0.25 });
+      pb.add(knee, RB(0.125, 0.15, 0.14, 0.035), L.boots, { p: [0, -0.37, 0.0], rough: 0.7 });
+      pb.add(knee, RB(0.125, 0.075, 0.25, 0.03), L.boots, { p: [0, -0.425, -0.05], rough: 0.7 });
+      pb.add(knee, RB(0.13, 0.03, 0.26, 0.01), 0x121212, { p: [0, -0.463, -0.05], rough: 0.95 });
       legs.push({ thigh, knee });
     }
 
-    const spine = new THREE.Group();
-    spine.position.y = 0.04;
-    hips.add(spine);
-    spine.add(box(0.4, 0.5, 0.22, uni, 0, 0.27, 0));
-    spine.add(box(0.44, 0.36, 0.28, vest, 0, 0.3, 0));
-    // pouches
-    for (let i = -1; i <= 1; i++) spine.add(box(0.09, 0.1, 0.05, vest, i * 0.11, 0.2, -0.16));
-    spine.add(box(0.1, 0.035, 0.05, accent, 0.26, 0.42, 0)); // arm band
-    const backpack = box(0.3, 0.3, 0.1, M.color(0x2b2b28, 0, 0.8), 0, 0.3, 0.18);
-    spine.add(backpack);
-    const bomb = box(0.26, 0.12, 0.16, M.color(0x5a5245, 0.2, 0.7), 0, 0.2, 0.26);
-    bomb.name = 'bombback';
+    const spine = bone(hips, 0, 0.04, 0);
+    pb.add(spine, RB(0.33, 0.22, 0.2, 0.06), L.uniform, { p: [0, 0.12, 0], rough: 0.9 });
+    pb.add(spine, RB(0.42, 0.3, 0.24, 0.07), L.uniform, { p: [0, 0.37, 0], rough: 0.9 });
+    pb.add(spine, RB(0.445, 0.2, 0.25, 0.04), L.vest, { p: [0, 0.27, 0] });
+    pb.add(spine, RB(0.37, 0.32, 0.06, 0.025), L.vest, { p: [0, 0.34, -0.125] });
+    pb.add(spine, RB(0.37, 0.33, 0.06, 0.025), L.vest, { p: [0, 0.35, 0.125] });
+    for (const sx of [-1, 1]) pb.add(spine, RB(0.075, 0.035, 0.31, 0.012), L.vest, { p: [sx * 0.135, 0.52, 0] });
+    for (let i = -1; i <= 1; i++) {
+      pb.add(spine, RB(0.085, 0.12, 0.055, 0.015), shade(L.vest, 0.82), { p: [i * 0.098, 0.25, -0.172] });
+      pb.add(spine, RB(0.06, 0.03, 0.035, 0.006), 0x1c1d1f, { p: [i * 0.098, 0.325, -0.172], rough: 0.6 });
+    }
+    pb.add(spine, RB(0.07, 0.1, 0.05, 0.012), shade(L.vest, 0.82), { p: [-0.13, 0.44, -0.168] });
+    pb.add(spine, RB(0.075, 0.042, 0.012, 0.004), L.accent, { p: [0.1, 0.45, -0.158], emit: 0.5 });
+    pb.add(spine, CYL(0.1, 0.12, 0.07, 12), L.uniform, { p: [0, 0.54, 0], rough: 0.9 });
+    pb.add(spine, RB(0.28, 0.31, 0.11, 0.035), L.pack, { p: [0, 0.33, 0.205] });
+    pb.add(spine, CYL(0.05, 0.05, 0.27, 10), shade(L.pack, 0.85), { p: [0, 0.51, 0.2], r: [0, 0, Math.PI / 2] });
+    pb.add(spine, RB(0.08, 0.05, 0.012, 0.004), L.accent, { p: [0, 0.42, 0.262], emit: 0.6 });
+    pb.add(spine, CYL(0.005, 0.005, 0.32, 5), dark, { p: [-0.11, 0.62, 0.22], r: [0.12, 0, 0.1], rough: 0.5 });
+
+    const neck = bone(spine, 0, 0.56, 0);
+    pb.add(neck, CYL(0.05, 0.056, 0.1, 10), faceCol, { p: [0, 0.02, 0] });
+    const head = bone(neck, 0, 0.1, 0);
+    pb.add(head, SPH(0.115, 16, 12), faceCol, { p: [0, 0.04, 0], s: [0.95, 1.05, 1], rough: 0.8 });
+    if (!L.balaclava) {
+      pb.add(head, RB(0.19, 0.075, 0.045, 0.02), 0x232323, { p: [0, -0.035, -0.095] });
+    } else {
+      pb.add(head, RB(0.17, 0.05, 0.04, 0.015), shade(L.head, 1.3), { p: [0, -0.02, -0.098] });
+    }
+    pb.add(head, SPH(0.133, 18, 10, 0, Math.PI * 0.52), L.helmet, { p: [0, 0.06, 0], rough: 0.55, metal: 0.15 });
+    pb.add(head, CYL(0.138, 0.138, 0.024, 20, true), shade(L.helmet, 0.8), { p: [0, 0.052, 0], rough: 0.6 });
+    pb.add(head, RB(0.055, 0.04, 0.03, 0.008), 0x2a2c30, { p: [0, 0.15, -0.115], rough: 0.4, metal: 0.7 });
+    for (const sx of [-1, 1]) {
+      pb.add(head, RB(0.025, 0.05, 0.14, 0.01), 0x2a2c30, { p: [sx * 0.131, 0.1, 0], rough: 0.5, metal: 0.5 });
+      if (L.ears) pb.add(head, CYL(0.042, 0.042, 0.04, 12), 0x202224, { p: [sx * 0.125, 0.02, 0], r: [0, 0, Math.PI / 2], rough: 0.7 });
+    }
+    pb.add(head, CYL(0.121, 0.121, 0.026, 16, true), dark, { p: [0, 0.07, 0], rough: 0.8 });
+    pb.add(head, RB(0.2, 0.058, 0.05, 0.018), L.lens, { p: [0, 0.07, -0.103], rough: 0.12, metal: 0.6, emit: 0.3 });
+    pb.add(head, RB(0.212, 0.068, 0.04, 0.02), dark, { p: [0, 0.07, -0.094], rough: 0.7 });
+
+    const aim = bone(spine, 0, 0.46, 0);
+    const arms = {};
+    for (const [key, side] of [['r', 1], ['l', -1]]) {
+      const grp = bone(aim, side * 0.23, 0, 0);
+      pb.add(grp, SPH(0.072, 10, 8, 0, Math.PI / 2), L.vest, { p: [0, -0.015, 0], s: [1, 0.85, 1.05] });
+      pb.add(grp, CAP(0.06, 0.2), L.uniform, { p: [0, -0.15, 0], rough: 0.9 });
+      if (side === 1) pb.add(grp, CYL(0.064, 0.064, 0.035, 12, true), L.accent, { p: [0, -0.09, 0], emit: 0.4 });
+      const elbow = bone(grp, 0, -UPPER_ARM, 0);
+      pb.add(elbow, RB(0.085, 0.075, 0.075, 0.025), L.pads, { p: [0, 0.0, 0.035], rough: 0.6 });
+      pb.add(elbow, CAP(0.054, 0.18), L.uniform, { p: [0, -0.125, 0], rough: 0.9 });
+      pb.add(elbow, CYL(0.059, 0.059, 0.05, 10), L.gloves, { p: [0, -0.23, 0] });
+      pb.add(elbow, RB(0.075, 0.1, 0.085, 0.025), L.gloves, { p: [0, -FORE_ARM, 0] });
+      grp.rotation.fromArray(ARM_POSE[key].up);
+      elbow.rotation.fromArray(ARM_POSE[key].fore);
+      arms[key] = { grp, elbow };
+    }
+
+    // bind pose -> skinned mesh
+    body.updateMatrixWorld(true);
+    const geo = pb.build(bones);
+    const mesh = new THREE.SkinnedMesh(geo, bakedMaterial());
+    mesh.add(body);
+    mesh.bind(new THREE.Skeleton(bones));
+    mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.9, 0), 1.5);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
+    const weaponMount = new THREE.Group();
+    weaponMount.position.fromArray(STANCE.rifle.grip);
+    aim.add(weaponMount);
+    const bomb = new THREE.Mesh(new RoundedBoxGeometry(0.26, 0.12, 0.16, 1, 0.02), M.color(0x5a5245, 0.2, 0.7));
+    bomb.position.set(0, 0.22, 0.3);
     bomb.visible = false;
+    bomb.castShadow = true;
     spine.add(bomb);
 
-    const neck = new THREE.Group();
-    neck.position.y = 0.56;
-    spine.add(neck);
-    neck.add(cyl(0.05, 0.08, skin, 0, 0.02, 0, 'y'));
-    const head = new THREE.Group();
-    head.position.y = 0.1;
-    neck.add(head);
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.115, 16, 12), headMat);
-    skull.scale.set(0.95, 1.05, 1);
-    skull.position.y = 0.04;
-    head.add(skull);
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.128, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), helmetMat);
-    helmet.position.y = 0.06;
-    head.add(helmet);
-    const goggles = box(0.2, 0.05, 0.05, lens, 0, 0.06, -0.1);
-    head.add(goggles);
-    if (!L.balaclava) head.add(box(0.19, 0.075, 0.04, M.color(0x222222, 0.1, 0.8), 0, -0.035, -0.1)); // mask
-
-    // arms + weapon rig (rotates with pitch)
-    const aim = new THREE.Group();
-    aim.position.set(0, 0.46, 0);
-    spine.add(aim);
-    const armR = new THREE.Group();
-    armR.position.set(0.23, 0, 0);
-    const armL = new THREE.Group();
-    armL.position.set(-0.23, 0, 0);
-    aim.add(armR, armL);
-    const mkArm = (grp, upperRot, foreRot) => {
-      const up = capsule(0.058, 0.2, uni);
-      up.position.y = -0.14;
-      grp.add(up);
-      const elbow = new THREE.Group();
-      elbow.position.y = -0.28;
-      grp.add(elbow);
-      const fore = capsule(0.052, 0.18, uni);
-      fore.position.y = -0.12;
-      elbow.add(fore);
-      const hand = box(0.07, 0.09, 0.08, gloves, 0, -0.27, 0);
-      elbow.add(hand);
-      grp.rotation.set(upperRot[0], upperRot[1], upperRot[2]);
-      elbow.rotation.set(foreRot[0], foreRot[1], foreRot[2]);
-      return { grp, elbow };
-    };
-    const rArm = mkArm(armR, [0.55, 0, 0.12], [1.05, 0, 0]);
-    const lArm = mkArm(armL, [1.25, 0, -0.55], [0.35, 0.1, 0]);
-    const weaponMount = new THREE.Group();
-    weaponMount.position.set(0.12, -0.14, -0.42);
-    aim.add(weaponMount);
-
-    mergeStatic(root);
-    root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-
+    const root = new THREE.Group();
+    root.add(mesh);
     this.root = root;
+    this.mesh = mesh;
     this.body = body;
     this.hips = hips;
     this.legs = legs;
@@ -521,15 +686,20 @@ export class PlayerModel {
     this.head = head;
     this.neck = neck;
     this.aim = aim;
-    this.arms = { r: rArm, l: lArm };
+    this.arms = arms;
     this.weaponMount = weaponMount;
     this.bombMesh = bomb;
     this.weaponId = null;
     this.weapon = null;
     this.walkPhase = 0;
     this.deathT = -1;
-    this.deathDir = 1;
+    this.deathX = 0;
+    this.deathZ = 1;
+    this.deathSpin = 0;
     this.recoil = 0;
+    this.reloadT = 0;
+    this.reloadK = 0;
+    this.breath = Math.random() * 6;
 
     if (name) {
       this.tag = makeNameTag(name, L.accent);
@@ -543,13 +713,12 @@ export class PlayerModel {
     if (this.weaponId === id) return;
     this.weaponId = id;
     if (this.weapon) this.weaponMount.remove(this.weapon);
-    this.weapon = weaponTemplate(id || 'knife');
+    this.weapon = bakedWeapon(id || 'knife');
     const info = this.weapon.userData;
     const grip = info.grip || [0, 0, 0];
     this.weapon.position.set(-grip[0], -grip[1], -grip[2]);
     if (info.kind === 'knife') { this.weapon.rotation.set(0, 0, 0); this.weapon.position.set(0.02, 0.02, 0.18); }
     if (info.kind === 'grenade' || info.kind === 'bomb') this.weapon.position.set(0.0, 0.0, 0.2);
-    this.weapon.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     this.weaponMount.add(this.weapon);
   }
 
@@ -560,65 +729,132 @@ export class PlayerModel {
     return this.weapon.localToWorld(out);
   }
 
-  die(dir = 1) {
+  // push: world-space direction the body is knocked towards (e.g. away from the killer), or a number
+  // for a plain backwards (+1) / forwards (-1) fall.
+  die(push = 1, pushZ) {
     if (this.deathT >= 0) return;
     this.deathT = 0;
-    this.deathDir = dir;
+    let lx = 0, lz = 1;
+    if (typeof push === 'number' && pushZ === undefined) lz = push >= 0 ? 1 : -1;
+    else {
+      const yaw = this.root.rotation.y, c = Math.cos(yaw), s = Math.sin(yaw);
+      lx = push * c - pushZ * s;
+      lz = push * s + pushZ * c;
+      const L = Math.hypot(lx, lz) || 1;
+      lx /= L; lz /= L;
+    }
+    this.deathX = lx;
+    this.deathZ = lz;
+    this.deathSpin = (Math.random() - 0.5) * 0.8;
   }
 
   revive() {
     this.deathT = -1;
     this.body.rotation.set(0, 0, 0);
     this.body.position.set(0, 0, 0);
+    this.hips.position.set(0, 0.92, 0);
   }
 
-  // s: { x,y,z,yaw,pitch,crouch,lean, speed, alive, onGround, planting, defusing, bomb }
+  // s: { x,y,z,yaw,pitch,crouch,lean, speed, vx, vz, alive, onGround, planting, defusing, bomb, reloading }
   update(s, dt) {
     const root = this.root;
     root.position.set(s.x, s.y, s.z);
     root.rotation.y = s.yaw;
+    const arms = this.arms;
     if (this.deathT >= 0) {
-      this.deathT = Math.min(1, this.deathT + dt / 0.55);
+      this.deathT = Math.min(1, this.deathT + dt / 0.6);
       const t = this.deathT;
-      const e = t * t * (3 - 2 * t);
-      this.body.rotation.x = e * (Math.PI / 2) * this.deathDir;
-      this.body.position.y = -e * 0.02 + Math.sin(t * Math.PI) * 0.08;
-      this.body.position.z = e * 0.3 * this.deathDir;
-      this.hips.position.y = 0.92 - e * 0.72;
-      this.aim.rotation.x = 0;
-      this.legs[0].thigh.rotation.x = e * 0.4;
-      this.legs[1].thigh.rotation.x = -e * 0.2;
+      const e = 1 - (1 - t) * (1 - t) * (1 - t);
+      const fall = t < 0.8 ? t / 0.8 : 1;
+      const f = fall * fall * (3 - 2 * fall);
+      const bounce = t > 0.8 ? Math.sin((t - 0.8) / 0.2 * Math.PI) * 0.04 : 0;
+      this.body.rotation.set(f * (Math.PI / 2) * this.deathZ - bounce, this.deathSpin * e, -f * (Math.PI / 2) * this.deathX * 0.9);
+      this.body.position.set(this.deathX * e * 0.35, Math.sin(Math.min(1, t * 1.6) * Math.PI) * 0.06, this.deathZ * e * 0.35);
+      this.hips.position.y = 0.92 - f * 0.74;
+      this.aim.rotation.x = -f * 0.6;
+      this.head.rotation.x = f * 0.5 * this.deathZ;
+      this.legs[0].thigh.rotation.x = f * 0.45;
+      this.legs[1].thigh.rotation.x = -f * 0.25;
+      this.legs[0].knee.rotation.x = -f * 0.6;
+      this.legs[1].knee.rotation.x = -f * 0.2;
+      void arms;
       return;
     }
     const c = s.crouch || 0;
     const speed = s.speed || 0;
     const moving = speed > 0.3 && s.onGround;
+    // split velocity into forward / sideways in the model's frame so strafing and backpedalling read correctly
+    const cy = Math.cos(s.yaw), sy = Math.sin(s.yaw);
+    const vx = s.vx ?? -sy * speed, vz = s.vz ?? -cy * speed;
+    const fwd = -(vx * sy + vz * cy), side = vx * cy - vz * sy;
+    const fk = speed > 0.01 ? fwd / Math.max(speed, 0.01) : 1;
+    const sk = speed > 0.01 ? side / Math.max(speed, 0.01) : 0;
     const amp = Math.min(1, speed / 5) * (1 - c * 0.4);
-    if (moving) this.walkPhase += dt * (4 + speed * 1.6) * (1 - c * 0.3);
+    if (moving) this.walkPhase += dt * (4 + speed * 1.6) * (1 - c * 0.3) * (fk < -0.3 ? -1 : 1);
     else this.walkPhase *= 0.9;
     const ph = this.walkPhase;
+    this.breath += dt;
     const hipsY = 0.92 - c * 0.4 - (moving ? Math.abs(Math.sin(ph)) * 0.03 * amp : 0);
     this.hips.position.y = hipsY;
+    this.hips.rotation.y = moving ? sk * 0.35 * Math.sign(fk || 1) : 0;
     const air = !s.onGround ? 0.5 : 0;
     for (let i = 0; i < 2; i++) {
       const sgn = i === 0 ? 1 : -1;
-      const swing = moving ? Math.sin(ph + (i ? Math.PI : 0)) * 0.6 * amp : 0;
-      const bend = moving ? Math.max(0, Math.sin(ph + (i ? Math.PI : 0) + Math.PI / 2)) * 0.9 * amp : 0;
-      this.legs[i].thigh.rotation.x = swing + c * 1.25 + air * (i ? 0.2 : 0.7);
+      const phase = ph + (i ? Math.PI : 0);
+      const swing = moving ? Math.sin(phase) * 0.6 * amp : 0;
+      const bend = moving ? Math.max(0, Math.sin(phase + Math.PI / 2)) * 0.9 * amp : 0;
+      this.legs[i].thigh.rotation.x = swing * Math.max(Math.abs(fk), 0.35) + c * 1.25 + air * (i ? 0.2 : 0.7);
       this.legs[i].knee.rotation.x = -bend - c * 2.0 - air * 0.9;
-      this.legs[i].thigh.rotation.z = sgn * 0.02;
+      this.legs[i].thigh.rotation.z = sgn * 0.03 + (moving ? Math.sin(phase) * 0.25 * amp * sk * sgn : 0);
     }
-    this.spine.rotation.x = c * 0.25 + (moving ? 0.05 : 0);
+    this.spine.rotation.x = c * 0.25 + (moving ? 0.05 * Math.sign(fk || 1) : 0) + Math.sin(this.breath * 1.7) * 0.012;
     this.spine.rotation.z = -(s.lean || 0) * 0.5;
-    this.spine.rotation.y = moving ? Math.sin(ph) * 0.06 * amp : 0;
+    this.spine.rotation.y = (moving ? Math.sin(ph) * 0.06 * amp : 0) - this.hips.rotation.y;
     const pitch = s.pitch || 0;
     this.recoil *= Math.exp(-dt * 14);
-    this.aim.rotation.x = pitch - c * 0.25 + this.recoil;
+    const info = this.weapon?.userData || {};
+    const st = STANCE[info.kind] || STANCE.rifle;
+    const tw = st.twist;
+    this.aim.rotation.set(pitch - c * 0.25 + this.recoil, tw, 0);
     this.head.rotation.x = pitch * 0.6 - c * 0.2;
     if (s.planting || s.defusing) {
       this.aim.rotation.x = -0.9;
       this.head.rotation.x = -0.6;
     }
+    // reload: weapon rolls towards the body, support hand goes to the magazine and back
+    const wantReload = s.reloading ? 1 : 0;
+    this.reloadK += (wantReload - this.reloadK) * Math.min(1, dt * 10);
+    if (s.reloading) this.reloadT += dt; else this.reloadT = 0;
+    const rk = this.reloadK;
+    const cyc = Math.sin(this.reloadT * 5.5);
+    // the aim bone is turned by `tw`; counter-rotate the weapon so it still points straight ahead
+    const wm = this.weaponMount;
+    wm.position.fromArray(st.grip).applyAxisAngle(UP_AXIS, -tw);
+    wm.rotation.set(rk * 0.15, -tw, rk * 0.55);
+    wm.updateMatrix();
+    solveArm(arms.r, wm.position, POLE.r);
+    // support hand: slide from the fore-grip back towards the firing hand until it is within reach
+    const T = _ik.t;
+    if (st.relaxed) T.copy(RELAXED_L);
+    else {
+      const grip = info.grip || [0, 0, 0];
+      const fore = info.fore || grip;
+      const off = _ik.v.set(fore[0] - grip[0], fore[1] - grip[1], fore[2] - grip[2]).applyQuaternion(wm.quaternion);
+      const S = arms.l.grp.position;
+      const reach = (UPPER_ARM + FORE_ARM) * 0.97;
+      let k = 1;
+      for (let i = 0; i < 8; i++) {
+        T.copy(wm.position).addScaledVector(off, k);
+        if (T.distanceTo(S) <= reach) break;
+        k -= 0.125;
+      }
+      if (rk > 0.01) {
+        // magazine sits just below the receiver in front of the grip
+        _ik.v.set(0, -0.12 - cyc * 0.05 * rk, -0.1).applyQuaternion(wm.quaternion).add(wm.position);
+        T.lerp(_ik.v, rk);
+      }
+    }
+    solveArm(arms.l, T, POLE.l);
     this.bombMesh.visible = !!s.bomb;
   }
 

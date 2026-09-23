@@ -285,6 +285,7 @@ export function buildMap(def) {
     desc: def.desc || '',
     modes: def.modes,
     theme: def.theme,
+    decor: def.decor || {},
     mats,
     cellSize: cs,
     rows, cols,
