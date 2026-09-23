@@ -80,6 +80,7 @@ export default {
     { r: 20, c: 20, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
   ],
   decor: {
+    skyline: 'hills',
     trim: 'concrete',
     torches: 16,
     grass: 'green',

@@ -112,6 +112,8 @@ export default {
     { r: 3, c: 11, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
   ],
   decor: {
+    skyline: 'desert',
+    flags: [{ r: 13, c: 17, h: 4, design: 'desert' }, { r: 13, c: 22, h: 4, design: 'desert' }],
     trim: 'sandstoneLight',
     palms: 16,
     grass: 'dry',

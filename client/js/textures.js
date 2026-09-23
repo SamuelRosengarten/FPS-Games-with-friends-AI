@@ -423,6 +423,60 @@ export const MATERIAL_DEFS = {
   lamp: { r: 'lamp', scale: 0, ns: 1 },
 };
 
+// ------------------------------------------------------------------ macro variation
+// Large-scale brightness/roughness variation in world space so tiling textures don't repeat visibly.
+let macroTex = null;
+function getMacroTex() {
+  if (macroTex) return macroTex;
+  const S = 256;
+  const data = new Uint8Array(S * S * 4);
+  const n1 = new Noise(4242), n2 = new Noise(777);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const u = x / S, v = y / S;
+      const i = (y * S + x) * 4;
+      data[i] = n1.fbm(u, v, 4, 3) * 255;
+      data[i + 1] = n2.fbm(u, v, 4, 6) * 255;
+      data[i + 2] = 255;
+      data[i + 3] = 255;
+    }
+  }
+  macroTex = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+  macroTex.wrapS = macroTex.wrapT = THREE.RepeatWrapping;
+  macroTex.magFilter = THREE.LinearFilter;
+  macroTex.minFilter = THREE.LinearMipmapLinearFilter;
+  macroTex.generateMipmaps = true;
+  macroTex.needsUpdate = true;
+  return macroTex;
+}
+
+export function addMacroVariation(m) {
+  const tex = getMacroTex();
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uMacroTex = { value: tex };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vMacroPos;\nvarying vec3 vMacroNrm;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        mat4 macroM = modelMatrix;
+        #ifdef USE_INSTANCING
+          macroM = modelMatrix * instanceMatrix;
+        #endif
+        vMacroPos = (macroM * vec4(transformed, 1.0)).xyz;
+        vMacroNrm = normalize(mat3(macroM) * objectNormal);`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uMacroTex;\nvarying vec3 vMacroPos;\nvarying vec3 vMacroNrm;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+        vec3 macroA = abs(vMacroNrm);
+        vec2 macroUV = macroA.y > max(macroA.x, macroA.z) ? vMacroPos.xz : (macroA.x > macroA.z ? vMacroPos.zy : vMacroPos.xy);
+        float macroN1 = texture2D(uMacroTex, macroUV * 0.019).r;
+        float macroN2 = texture2D(uMacroTex, macroUV * 0.071).g;
+        diffuseColor.rgb *= mix(0.8, 1.14, macroN1) * mix(0.92, 1.06, macroN2);`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = clamp(roughnessFactor * mix(0.86, 1.1, macroN2), 0.04, 1.0);`);
+  };
+  m.customProgramCacheKey = () => 'macro-variation';
+}
+
 export class TextureLibrary {
   constructor(renderer, quality) {
     this.renderer = renderer;
@@ -465,6 +519,7 @@ export class TextureLibrary {
       m.emissiveIntensity = 3.5;
     }
     m.userData.scale = d.scale ?? 3;
+    if ((d.scale ?? 3) >= 2 && this.size >= 512) addMacroVariation(m);
     this.materials.set(name, m);
     return m;
   }

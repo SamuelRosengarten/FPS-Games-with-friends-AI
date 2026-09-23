@@ -151,6 +151,9 @@ export default {
     { r: 20, c: 19, level: 'upper', color: 0xfff0d8, intensity: 8, distance: 22 },
   ],
   decor: {
+    skyline: 'city',
+    fountain: [29, 18, 30, 21],
+    flags: [{ r: 23, c: 17, h: 4.5 }, { r: 23, c: 22, h: 4.5 }, { r: 35, c: 18, h: 4, design: 'embassy' }, { r: 35, c: 21, h: 4, design: 'embassy' }],
     trim: 'plasterDark',
     palms: 10,
     grass: 'green',

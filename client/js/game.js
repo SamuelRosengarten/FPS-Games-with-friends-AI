@@ -154,11 +154,6 @@ export class ClientGame {
     this.drops.clear();
     if (this.bombModel) this.g.scene.remove(this.bombModel);
     if (this.ownModel) this.g.scene.remove(this.ownModel.root);
-    // dispose effects' scene objects
-    if (this.effects) {
-      const fx = this.effects;
-      for (const o of [fx.sparks.points, fx.dust.points, ...fx.tracers.map((t) => t.m), ...fx.decals, ...fx.debris.map((d) => d.m), ...fx.lights.map((l) => l.l), ...fx.muzzles.map((m) => m.s)]) this.g.scene.remove(o);
-    }
     this.audio.stopAmbient();
     this.hud.show(false);
     this.hud.scope(false);
