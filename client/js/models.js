@@ -323,7 +323,22 @@ function buildKnife() {
   return finish(g, { muzzle: [0, 0.02, -0.28], sightY: 0.02, grip: [0, 0.015, 0.01], kind: 'knife' });
 }
 
+function buildBreach(o) {
+  const g = new THREE.Group();
+  const body = M.color(o.body, 0.2, 0.75);
+  g.add(box(0.15, 0.1, 0.035, body, 0, 0, 0));
+  g.add(box(0.13, 0.08, 0.012, M.color(0x8a7a52, 0, 0.9), 0, 0, 0.022)); // explosive block
+  g.add(box(0.16, 0.02, 0.04, M.rubber(), 0, 0.03, 0)); // strap
+  g.add(box(0.16, 0.02, 0.04, M.rubber(), 0, -0.03, 0));
+  g.add(box(0.035, 0.03, 0.02, M.polymer(), 0.045, 0.0, 0.032)); // detonator
+  const led = box(0.008, 0.008, 0.006, M.red(), 0.045, 0.012, 0.044);
+  g.add(led);
+  g.add(cyl(0.003, 0.08, M.color(0xb03020, 0, 0.6), -0.02, 0.0, 0.03, 'x', 5));
+  return finish(g, { muzzle: [0, 0, 0], sightY: 0, grip: [0, 0, 0], kind: 'grenade' });
+}
+
 function buildGrenade(o, id) {
+  if (id === 'breach') return buildBreach(o);
   const g = new THREE.Group();
   const body = M.color(o.body, 0.3, 0.6);
   if (id === 'frag') {
@@ -719,7 +734,14 @@ export class PlayerModel {
     this.weapon.position.set(-grip[0], -grip[1], -grip[2]);
     if (info.kind === 'knife') { this.weapon.rotation.set(0, 0, 0); this.weapon.position.set(0.02, 0.02, 0.18); }
     if (info.kind === 'grenade' || info.kind === 'bomb') this.weapon.position.set(0.0, 0.0, 0.2);
+    if (this.layer != null) this.weapon.layers.set(this.layer);
     this.weaponMount.add(this.weapon);
+  }
+
+  // Render layer for the whole model, including weapons equipped later (own shadow-only body).
+  setLayer(layer) {
+    this.layer = layer;
+    this.root.traverse((o) => o.layers.set(layer));
   }
 
   muzzleWorld(out = new THREE.Vector3()) {
@@ -820,6 +842,9 @@ export class PlayerModel {
     if (s.planting || s.defusing) {
       this.aim.rotation.x = -0.9;
       this.head.rotation.x = -0.6;
+    } else if (s.reinforcing) {
+      this.aim.rotation.x = -0.35 + Math.sin(this.breath * 9) * 0.06;
+      this.head.rotation.x = -0.2;
     }
     // reload: weapon rolls towards the body, support hand goes to the magazine and back
     const wantReload = s.reloading ? 1 : 0;

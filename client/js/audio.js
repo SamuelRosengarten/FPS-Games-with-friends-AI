@@ -123,12 +123,22 @@ export class AudioEngine {
       g.connect(p);
       last = p;
       const d = this.dist(pos);
-      if (d > 18) {
+      // walls between us and the source muffle it (0 = clear, 1 = fully blocked)
+      const occ = d > 1.5 && this.occlusion ? this.occlusion(pos) : 0;
+      let cutoff = d > 18 ? Math.max(700, 16000 / (1 + (d - 18) / 9)) : 20000;
+      if (occ > 0) cutoff = Math.min(cutoff, 16000 * (1 - occ) + 650 * occ);
+      if (cutoff < 19000) {
         const lp = ctx.createBiquadFilter();
         lp.type = 'lowpass';
-        lp.frequency.value = Math.max(700, 16000 / (1 + (d - 18) / 9));
-        p.connect(lp);
+        lp.frequency.value = cutoff;
+        last.connect(lp);
         last = lp;
+      }
+      if (occ > 0) {
+        const og = ctx.createGain();
+        og.gain.value = 1 - 0.5 * occ;
+        last.connect(og);
+        last = og;
       }
     }
     last.connect(bus || this.sfx);
@@ -430,6 +440,50 @@ export class AudioEngine {
     this.burst(out, t, { type: 'bandpass', freq: 2800, q: 6, peak: 0.6, decay: 0.05 });
     this.tone(out, t, { type: 'triangle', freq: 1900, peak: 0.15, decay: 0.08 });
     this.track(0.15);
+  }
+
+  // breach charge slapped onto a surface
+  stick(pos) {
+    if (!this.ok()) return;
+    const t = this.now;
+    const out = this.out(pos, { ref: 2, rolloff: 1.4 });
+    out.gain.value = 0.6;
+    this.burst(out, t, { type: 'lowpass', freq: 900, q: 1, peak: 0.8, decay: 0.07 });
+    this.tone(out, t, { type: 'square', freq: 180, to: 120, peak: 0.12, decay: 0.05 });
+    this.track(0.2);
+  }
+
+  breachBeep(pos) {
+    if (!this.ok()) return;
+    const out = this.out(pos, { ref: 2.5, rolloff: 1.3 });
+    out.gain.value = 0.35;
+    this.tone(out, this.now, { type: 'square', freq: 2400, peak: 0.25, decay: 0.05 });
+    this.track(0.1);
+  }
+
+  // metal plates being bolted onto a wall
+  reinforcing(pos) {
+    if (!this.ok()) return;
+    const t = this.now;
+    const out = this.out(pos, { ref: 3, rolloff: 1.2, reverb: 0.2 });
+    out.gain.value = 0.5;
+    for (let i = 0; i < 5; i++) {
+      const tt = t + i * 0.45 + Math.random() * 0.1;
+      this.burst(out, tt, { type: 'bandpass', freq: 1200 + Math.random() * 600, q: 4, peak: 0.6, decay: 0.12 });
+      this.tone(out, tt, { type: 'triangle', freq: 620 + Math.random() * 120, peak: 0.12, decay: 0.25 });
+    }
+    this.track(2.6);
+  }
+
+  reinforced(pos) {
+    if (!this.ok()) return;
+    const t = this.now;
+    const out = this.out(pos, { ref: 3, rolloff: 1.2, reverb: 0.3 });
+    out.gain.value = 0.7;
+    this.burst(out, t, { type: 'lowpass', freq: 600, q: 1, peak: 1, decay: 0.25 });
+    this.tone(out, t, { type: 'triangle', freq: 220, to: 160, peak: 0.3, decay: 0.5 });
+    this.tone(out, t, { type: 'sine', freq: 880, peak: 0.08, decay: 0.8 });
+    this.track(0.9);
   }
 
   // spent brass hitting the floor

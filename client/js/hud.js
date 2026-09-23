@@ -184,6 +184,17 @@ export class HUD {
     el.classList.toggle('show', !!html);
   }
 
+  report(html, dur = 7) {
+    const el = $('dmg-report');
+    if (!el) return;
+    clearTimeout(this.reportTimer);
+    if (!html) { el.hidden = true; return; }
+    el.innerHTML = html;
+    el.hidden = false;
+    el.classList.remove('fade');
+    this.reportTimer = setTimeout(() => { el.classList.add('fade'); this.reportTimer = setTimeout(() => { el.hidden = true; }, 600); }, dur * 1000);
+  }
+
   progress(label, frac, kind) {
     const el = $('progress');
     if (label == null) { if (!el.hidden) el.hidden = true; return; }

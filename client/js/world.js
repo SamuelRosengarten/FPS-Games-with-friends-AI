@@ -1,6 +1,7 @@
 // Builds renderable meshes for a map: merged static geometry per material, breakable panels, lights, markings.
 
 import * as THREE from 'three';
+const ZERO_SCALE = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const STRIPS = [0, 0.35, 1.1, 2.4];
 
@@ -262,6 +263,37 @@ export class WorldView {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.panelMesh = mesh;
     this.group.add(mesh);
+    // steel plates for reinforced panels (hidden until a defender reinforces)
+    const steel = this.tex.material('metal').clone();
+    steel.vertexColors = false;
+    steel.color.set(0xb4bac0);
+    steel.metalness = 0.55;
+    const plates = new THREE.InstancedMesh(geo, steel, ids.length);
+    plates.castShadow = true;
+    plates.receiveShadow = true;
+    ids.forEach((id, i) => plates.setMatrixAt(i, ZERO_SCALE));
+    plates.instanceMatrix.needsUpdate = true;
+    this.plateMesh = plates;
+    this.group.add(plates);
+  }
+
+  setPanelReinforced(id, on) {
+    const p = this.panels.get(id);
+    if (!p || !this.plateMesh) return;
+    p.reinforced = on;
+    const b = p.box;
+    if (on) {
+      const m4 = new THREE.Matrix4();
+      const pad = 0.03;
+      m4.makeScale(b.max[0] - b.min[0] + pad, b.max[1] - b.min[1] + pad * 0.5, b.max[2] - b.min[2] + pad);
+      m4.setPosition((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2);
+      this.plateMesh.setMatrixAt(p.index, m4);
+      this.setPanelMatrix(this.panelMesh, p.index, b, 0);
+      this.panelMesh.instanceMatrix.needsUpdate = true;
+    } else {
+      this.plateMesh.setMatrixAt(p.index, ZERO_SCALE);
+    }
+    this.plateMesh.instanceMatrix.needsUpdate = true;
   }
 
   setPanelMatrix(mesh, i, b, s) {
@@ -283,6 +315,9 @@ export class WorldView {
     const indoor = this.roofedAt((b.min[0] + b.max[0]) / 2, (b.min[2] + b.max[2]) / 2, 1) ? 0.6 : 1;
     if (hp <= 0) {
       this.setPanelMatrix(this.panelMesh, p.index, b, 0);
+      if (p.reinforced) this.setPanelReinforced(id, false);
+    } else if (p.reinforced) {
+      this.setPanelMatrix(this.panelMesh, p.index, b, 0);
     } else {
       this.setPanelMatrix(this.panelMesh, p.index, b, 1);
       col.setScalar(indoor * (0.45 + 0.55 * (hp / 100)));
@@ -294,7 +329,10 @@ export class WorldView {
   }
 
   resetPanels() {
-    for (const [id] of this.panels) this.setPanelHp(id, 100);
+    for (const [id, p] of this.panels) {
+      if (p.reinforced) this.setPanelReinforced(id, false);
+      this.setPanelHp(id, 100);
+    }
   }
 
   buildLights() {

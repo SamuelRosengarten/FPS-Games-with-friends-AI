@@ -203,9 +203,11 @@ export function buildMap(def) {
         const bw = cs / nCols, bh = panelTop / rowsN;
         for (let i = 0; i < nCols; i++) {
           for (let j = 0; j < rowsN; j++) {
+            // pieces of one cell share a group so the whole wall section is reinforced together
+            const extra = { kind: 'panel', destructible: true, hp: DESTRUCTIBLE_HP, group: r * cols + c };
             const b = alongX
-              ? add(mx + i * bw, j * bh, cz - th, mx + (i + 1) * bw, (j + 1) * bh, cz + th, mats.destructible, { kind: 'panel', destructible: true, hp: DESTRUCTIBLE_HP })
-              : add(cx - th, j * bh, mz + i * bw, cx + th, (j + 1) * bh, mz + (i + 1) * bw, mats.destructible, { kind: 'panel', destructible: true, hp: DESTRUCTIBLE_HP });
+              ? add(mx + i * bw, j * bh, cz - th, mx + (i + 1) * bw, (j + 1) * bh, cz + th, mats.destructible, extra)
+              : add(cx - th, j * bh, mz + i * bw, cx + th, (j + 1) * bh, mz + (i + 1) * bw, mats.destructible, { ...extra });
             destructibles.push(b.id);
           }
         }

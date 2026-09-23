@@ -42,6 +42,7 @@ if (view === 'vm') {
   await tex.prepare(mats);
   const wv = new WorldView(g, tex, map);
   const decor = q.get('decor') === '0' ? null : new Decor(g, tex, map);
+  if (q.get('reinforce')) map.destructibles.forEach((id, i) => { if (Math.floor(i / 6) % 2 === 0) wv.setPanelReinforced(id, true); });
   window.__decor = decor;
   const cam = (q.get('cam') || '0,1.7,0,0,0').split(',').map(Number);
   g.camera.position.set(cam[0], cam[1], cam[2]);

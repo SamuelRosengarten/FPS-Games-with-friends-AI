@@ -153,6 +153,11 @@ def('smoke', {
   fuse: 1.4, speed: 1.0, deploy: 0.5, interval: 0.9, duration: 18, radius: 4.6,
   model: { kind: 'grenade', body: 0x5b6d7a },
 });
+def('breach', {
+  name: 'Breach Charge', short: 'Breach', type: 'grenade', slot: 'grenade', price: 400, max: 1, team: 1,
+  damage: 80, radius: 3.6, breakRadius: 2.1, fuse: 1.6, sticky: true, speed: 1.0, deploy: 0.5, interval: 0.9,
+  model: { kind: 'grenade', body: 0x3b3f36 },
+});
 def('bomb', {
   name: 'Bomb', short: 'Bomb', type: 'bomb', slot: 'bomb', price: 0, speed: 1.0, deploy: 0.6, interval: 1,
   model: { kind: 'bomb' },
@@ -160,7 +165,7 @@ def('bomb', {
 
 export const WEAPONS = Object.freeze(W);
 
-export const GRENADES = ['frag', 'flash', 'smoke'];
+export const GRENADES = ['frag', 'flash', 'smoke', 'breach'];
 
 export const GEAR = Object.freeze({
   kevlar: { id: 'kevlar', name: 'Kevlar Vest', price: 650 },
@@ -175,7 +180,7 @@ export const BUY_MENU = [
   { name: 'Rifles', items: ['marauder', 'ar', 'm4'] },
   { name: 'Snipers', items: ['scout', 'awp'] },
   { name: 'Gear', items: ['kevlar', 'helmet', 'kit'] },
-  { name: 'Grenades', items: ['frag', 'flash', 'smoke'] },
+  { name: 'Grenades', items: ['frag', 'flash', 'smoke', 'breach'] },
 ];
 
 export const GUNGAME_ORDER = ['smg', 'rattler', 'shotgun', 'marauder', 'm4', 'ar', 'scout', 'awp', 'deagle', 'p2k', 'p9', 'knife'];

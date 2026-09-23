@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import {
   TEAM, TEAM_NAMES, PLAYER, FLAG, INTERP_DELAY, USE_RANGE, MODES, DEG,
-  clamp, lerp, angleLerp, wrapAngle, viewDir, isEnemy,
+  clamp, lerp, angleLerp, wrapAngle, viewDir, isEnemy, TAG_MS, tagSlow,
 } from '../shared/constants.js';
 import { WEAPONS, GRENADES, computeSpread, applySpread, recoilDelta, GUNGAME_ORDER } from '../shared/weapons.js';
 import { loadMap } from '../shared/maps/index.js';
@@ -36,6 +36,7 @@ export class ClientGame {
     this.lobbyPlayers = new Map();
     this.players = new Map();
     this.grenades = new Map();
+    this.stuck = new Map();
     this.drops = new Map();
     this.sb = null;
   }
@@ -54,7 +55,7 @@ export class ClientGame {
       this.tex = new TextureLibrary(this.g.renderer, this.g.quality);
       this.tex.quality = this.g.quality;
     }
-    const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
+    const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', 'metal', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
     const t0 = performance.now();
     await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}… ${Math.round(f * 100)}%`; });
     const t1 = performance.now();
@@ -68,6 +69,12 @@ export class ClientGame {
     this.effects.setWorld(this.world);
     this.effects.setAmbient(this.map.theme.motes);
     this.effects.onCasingBounce = (p, big) => this.audio.casing(p, big);
+    this.audio.occlusion = (pos) => {
+      const l = this.audio.listener;
+      const a = this.world.lineOfSight(l.x, l.y, l.z, pos[0], pos[1], pos[2]);
+      const b = this.world.lineOfSight(l.x, l.y, l.z, pos[0], pos[1] + 0.9, pos[2]);
+      return a && b ? 0 : a || b ? 0.5 : 1;
+    };
     this.viewmodel = this.viewmodel || new ViewModel(this.g);
     this.viewmodel.setVisible(true);
     this.radar = new Radar(document.getElementById('radar'), this.map);
@@ -90,13 +97,13 @@ export class ClientGame {
     this.g.scene.add(this.bombLight);
     this.nextBeep = 0;
     for (const [id, x, y, z, until, start] of st.smokes || []) this.effects.addSmoke(id, [x, y, z], start, until, this.net.serverNow(), this.smokeTint());
-    for (const [id, hp] of st.walls || []) this.applyWall(id, hp, false);
+    for (const [id, hp, r] of st.walls || []) this.applyWall(id, hp, false, !!r);
     for (const d of st.drops || []) this.addDrop(d);
 
     this.me = {
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, onGround: true, crouch: 0, lean: 0, yaw: 0, pitch: 0,
       alive: false, hp: 0, armor: 0, helmet: false, kit: false, money: 0, team: this.lobbyPlayers.get(myId)?.team ?? 0,
-      inv: { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0 }, bomb: false }, cur: 'knife', gg: 0, buyUntil: 0,
+      inv: { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0, breach: 0 }, bomb: false }, cur: 'knife', gg: 0, buyUntil: 0,
     };
     this.tpId = 0;
     this.w = { nextFire: 0, reloadEnd: 0, deployEnd: 0, shots: 0, lastShot: 0, bloom: 0, punchYaw: 0, punchPitch: 0, ads: 0, adsHeld: false, scope: 0, pin: false, lob: false, lastSlot: 'secondary', dryClick: false, rezoomAt: 0 };
@@ -120,7 +127,7 @@ export class ClientGame {
     this.visibleEnemies = new Map();
     // own model (shadow only)
     this.ownModel = new PlayerModel(teamLook(this.me.team, myId, this.ffa));
-    this.ownModel.root.traverse((o) => o.layers.set(2));
+    this.ownModel.setLayer(2);
     this.g.scene.add(this.ownModel.root);
     this.active = true;
     this.audio.startAmbient(this.map.theme.ambientSound);
@@ -134,6 +141,7 @@ export class ClientGame {
   stop() {
     if (!this.active) return;
     this.active = false;
+    this.audio.occlusion = null;
     this.worldView?.dispose();
     this.decor?.dispose();
     this.effects?.dispose();
@@ -194,7 +202,7 @@ export class ClientGame {
   rebuildOwnModel() {
     if (this.ownModel) this.g.scene.remove(this.ownModel.root);
     this.ownModel = new PlayerModel(teamLook(this.me.team, this.myId, this.ffa));
-    this.ownModel.root.traverse((o) => o.layers.set(2));
+    this.ownModel.setLayer(2);
     this.g.scene.add(this.ownModel.root);
     this.viewmodel.setLook(teamLook(this.me.team || 1, this.myId, this.ffa));
   }
@@ -218,7 +226,9 @@ export class ClientGame {
       case 'hit': this.onHit(msg); break;
       case 'dmg': this.onDamage(msg); break;
       case 'kill': this.onKill(msg); break;
-      case 'walls': for (const [id, hp] of msg.d) this.applyWall(id, hp, true); break;
+      case 'walls': for (const [id, hp, r] of msg.d) this.applyWall(id, hp, true, !!r); break;
+      case 'report': this.onReport(msg); break;
+      case 'reinforce': this.onReinforce(msg); break;
       case 'nade': this.onNade(msg); break;
       case 'flashed': this.onFlashed(msg); break;
       case 'bomb': this.onBombEvent(msg); break;
@@ -241,7 +251,8 @@ export class ClientGame {
     this.grenades.clear();
     this.effects.reset();
     this.worldView.resetPanels();
-    for (const id of this.map.destructibles) { const b = this.world.byId.get(id); if (b) { b.active = true; b.hp = 100; } }
+    for (const id of this.map.destructibles) { const b = this.world.byId.get(id); if (b) { b.active = true; b.hp = 100; b.reinforced = false; } }
+    this.stuck.clear();
     for (const rp of this.players.values()) { rp.model.revive(); rp.deadAt = 0; }
   }
 
@@ -286,6 +297,7 @@ export class ClientGame {
     const localMag = this.curItem()?.[1];
     me.hp = m.hp; me.armor = m.armor; me.helmet = m.helmet; me.kit = m.kit; me.money = m.money; me.gg = m.gg; me.buyUntil = m.buyUntil;
     me.team = m.team;
+    me.reinforceLeft = m.rf || 0;
     me.inv = m.inv;
     me.alive = m.alive;
     if (m.cur !== me.cur || !wasAlive) me.cur = m.cur;
@@ -334,6 +346,35 @@ export class ClientGame {
     if (m.kill) this.input.rumble(0.3, 0.6, 120);
   }
 
+  onReport(m) {
+    const row = (id, dmg, hits, cls) => `<div class="dr-row ${cls}"><span>${esc(this.nameOf(id))}</span><b>${dmg}</b><i>${hits} hit${hits === 1 ? '' : 's'}</i></div>`;
+    let html = '';
+    if (m.given.length) html += `<div class="dr-title">Damage given</div>${m.given.map(([id, d, h]) => row(id, d, h, 'given')).join('')}`;
+    if (m.taken.length) html += `<div class="dr-title">Damage taken</div>${m.taken.map(([id, d, h]) => row(id, d, h, 'taken')).join('')}`;
+    this.hud.report(html, 7);
+  }
+
+  onReinforce(m) {
+    if (m.left != null) this.me.reinforceLeft = m.left;
+    if (m.ev === 'start') this.progress = { label: 'REINFORCING WALL', start: this.net.serverNow(), end: m.endsAt, kind: 'defuse' };
+    else {
+      this.progress = null;
+      if (m.ev === 'done') this.hud.center('WALL REINFORCED', `${m.left} reinforcement${m.left === 1 ? '' : 's'} left`, 'good', 1.4);
+    }
+  }
+
+  // Panel the local player is looking at that can be reinforced (defenders, Defuse only).
+  reinforceTarget() {
+    const me = this.me;
+    if (this.mode !== 'defuse' || me.team !== TEAM.DEF || !(me.reinforceLeft > 0)) return null;
+    if (this.phase !== 'freeze' && this.phase !== 'live') return null;
+    const eye = eyePosition(me);
+    const d = viewDir(me.yaw, me.pitch);
+    const h = this.world.raycast(eye[0], eye[1], eye[2], d[0], d[1], d[2], 2.3);
+    if (!h || !h.box.destructible || !h.box.active || h.box.reinforced) return null;
+    return h.box;
+  }
+
   // Blood on the wall (or floor) behind a hit, along the bullet's direction.
   bloodSplatter(p, dir) {
     const L = Math.hypot(dir[0], dir[1], dir[2]);
@@ -359,6 +400,7 @@ export class ClientGame {
     this.w.punchPitch += Math.min(0.05, m.amt * 0.0012);
     this.shake = Math.min(1, this.shake + m.amt / 60);
     this.hurtFlash = Math.min(1, (this.hurtFlash || 0) + 0.25 + m.amt / 60);
+    if (m.amt > 0) { this.tagAmt = Math.min(1, m.amt / 60 + 0.3); this.tagUntil = performance.now() + TAG_MS; }
     this.input.rumble(0.8, 0.4, 150);
   }
 
@@ -412,10 +454,15 @@ export class ClientGame {
     }
   }
 
-  applyWall(id, hp, fx) {
+  applyWall(id, hp, fx, reinforced = false) {
     const b = this.world.byId.get(id);
     if (!b) return;
     b.hp = hp;
+    if (!!b.reinforced !== reinforced && hp > 0) {
+      b.reinforced = reinforced;
+      this.worldView.setPanelReinforced(id, reinforced);
+    }
+    if (hp <= 0) b.reinforced = false;
     if (hp <= 0 && b.active) {
       b.active = false;
       const broke = this.worldView.setPanelHp(id, 0);
@@ -437,6 +484,20 @@ export class ClientGame {
       this.audio.explosion(p);
       this.shake = Math.min(1.5, this.shake + Math.max(0, 1.4 - d / 14));
       if (d < 12) this.input.rumble(1, 0.8, 350);
+    } else if (m.type === 'breach') {
+      this.effects.explosion(p, false);
+      const n = m.n || [0, 1, 0];
+      // splinters blown out through the wall
+      const floor = this.world.groundBelow(p[0], p[1], p[2], 4);
+      for (let i = 0; i < 10; i++) {
+        const s = 0.05 + Math.random() * 0.14;
+        this.effects.chunk(p, [-n[0] * (4 + Math.random() * 5) + (Math.random() - 0.5) * 4, 1 + Math.random() * 3, -n[2] * (4 + Math.random() * 5) + (Math.random() - 0.5) * 4],
+          [s, s * 0.3, s * (0.5 + Math.random())], floor, 0x8a6238);
+      }
+      this.audio.explosion(p);
+      this.shake = Math.min(1.5, this.shake + Math.max(0, 1.1 - d / 12));
+      if (d < 10) this.input.rumble(0.9, 0.7, 300);
+      for (const [id, st] of this.stuck) if (Math.hypot(st.p[0] - p[0], st.p[1] - p[1], st.p[2] - p[2]) < 0.6) this.stuck.delete(id);
     } else if (m.type === 'flash') {
       this.effects.flashbang(p);
       this.audio.flashPop(p);
@@ -533,6 +594,12 @@ export class ClientGame {
       case 'bounce': this.audio.bounce(m.p); break;
       case 'pickup': this.audio.pickup(); break;
       case 'throw': if (m.id !== this.myId) this.audio.throwWhoosh(pos); break;
+      case 'stick':
+        this.audio.stick(m.p);
+        this.stuck.set(m.id, { p: m.p, n: m.n || [0, 1, 0], until: m.until, nextBeep: 0 });
+        break;
+      case 'reinforcing': this.audio.reinforcing(m.p); break;
+      case 'reinforced': this.audio.reinforced(m.p); break;
       default: break;
     }
   }
@@ -749,7 +816,8 @@ export class ClientGame {
     }
     if (leanTarget) leanTarget *= leanClearance(this.world, me, me.yaw, Math.sign(leanTarget));
     const scoped = wd?.scope && w.scope > 0;
-    const speedMul = (scoped && wd.scopedSpeed ? wd.scopedSpeed : wd?.speed || 1) * lerp(1, 0.8, wd?.scope ? 0 : w.ads);
+    let speedMul = (scoped && wd.scopedSpeed ? wd.scopedSpeed : wd?.speed || 1) * lerp(1, 0.8, wd?.scope ? 0 : w.ads);
+    if (this.tagUntil > now) speedMul *= 1 - tagSlow(this.tagAmt, (this.tagUntil - now) / TAG_MS);
     const jumpPressed = playing && inp.pressed('jump');
     const jumped = stepPlayer(this.world, me, {
       fwd: mv.y, right: mv.x, jump: jumpPressed, crouch: playing && inp.isDown('crouch'),
@@ -838,6 +906,7 @@ export class ClientGame {
     if (me.team === TEAM.DEF && b && b.state === 'planted' && this.phase === 'planted') {
       if (Math.hypot(b.p[0] - me.x, b.p[1] - me.y, b.p[2] - me.z) < USE_RANGE + 0.2) return 'defuse';
     }
+    if (this.reinforceTarget()) return 'reinforce';
     return this.dropTarget() ? 'pickup' : null;
   }
 
@@ -963,7 +1032,7 @@ export class ClientGame {
         if (r) { playerFirst = true; break; }
       }
       if (hit && !playerFirst) {
-        const surf = SURFACE_IDX[materialInfo(hit.box.mat).surface] ?? 0;
+        const surf = hit.box.reinforced ? 2 : SURFACE_IDX[materialInfo(hit.box.mat).surface] ?? 0;
         this.effects.impact(end, hit.n, surf, true);
         if (Math.random() < 0.5) this.audio.impact(surf, end);
       }
@@ -1064,6 +1133,7 @@ export class ClientGame {
       s.onGround = !!(s.flags & FLAG.GROUND);
       s.planting = !!(s.flags & FLAG.PLANT);
       s.defusing = !!(s.flags & FLAG.DEFUSE);
+      s.reinforcing = !!(s.flags & FLAG.REINFORCE);
       s.bomb = !!(s.flags & FLAG.BOMB);
       s.alive = alive;
       if (alive && !rp.alive) { rp.model.revive(); }
@@ -1150,6 +1220,19 @@ export class ClientGame {
         if (sn[i].t <= renderT) { a = sn[i]; b = sn[Math.min(i + 1, sn.length - 1)]; break; }
       }
       const k = b.t > a.t ? clamp((renderT - a.t) / (b.t - a.t), 0, 1) : 0;
+      const st = this.stuck.get(g.id);
+      if (st) {
+        // flush against the surface, blinking faster as the fuse runs out
+        g.mesh.position.set(st.p[0], st.p[1], st.p[2]);
+        g.mesh.quaternion.setFromUnitVectors(tmpV2.set(0, 0, 1), tmpV.set(st.n[0], st.n[1], st.n[2]));
+        const left = st.until - serverNow;
+        if (now >= st.nextBeep && left > 0) {
+          st.nextBeep = now + clamp(left / 5, 70, 300);
+          this.audio.breachBeep(st.p);
+          this.effects.sparks.spawn(st.p[0] + st.n[0] * 0.03, st.p[1] + st.n[1] * 0.03, st.p[2] + st.n[2] * 0.03, 0, 0, 0, 6, 0.4, 0.3, 1, 0.07, 0.06, 0, 0, 0);
+        }
+        continue;
+      }
       g.mesh.position.set(lerp(a.x, b.x, k), lerp(a.y, b.y, k), lerp(a.z, b.z, k));
       g.mesh.rotation.x += dt * 8;
       g.mesh.rotation.z += dt * 5;
@@ -1318,6 +1401,7 @@ export class ClientGame {
       const k = this.keyName('use');
       if (ut === 'plant') hint = `Hold <b>${k}</b> to plant the bomb`;
       else if (ut === 'defuse') hint = `Hold <b>${k}</b> to defuse${me.kit ? '' : ' (no kit)'}`;
+      else if (ut === 'reinforce') hint = `Hold <b>${k}</b> to reinforce this wall (${me.reinforceLeft} left)`;
       else if (ut === 'pickup') { const d = this.dropTarget(); hint = `Press <b>${k}</b> to pick up ${esc(WEAPONS[d.wid]?.name || '')}`; }
       else if (this.canBuy() && this.modeInfo.economy && this.phase === 'freeze') hint = `Press <b>${this.keyName('buy')}</b> to open the buy menu`;
       else if (this.canBuy() && !this.modeInfo.economy && this.mode !== 'gungame') hint = `Press <b>${this.keyName('buy')}</b> to choose your loadout`;
