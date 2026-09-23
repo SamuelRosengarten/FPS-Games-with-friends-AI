@@ -98,7 +98,8 @@ if (view === 'vm') {
   const pc = (q.get('cam') || '0,1.5,5.5,0,1,0').split(',').map(Number);
   g.camera.position.set(pc[0], pc[1], pc[2]);
   g.camera.lookAt(pc[3], pc[4], pc[5]);
-  if (q.get('dead')) window.__players.forEach((m, i) => { m.die(i % 2 ? 1 : -1); for (let k = 0; k < 60; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y }, 0.016); });
+  if (q.get('dead')) window.__players.forEach((m, i) => { m.die(i % 2 ? 1 : -1); for (let k = 0; k < +(q.get('dead')) ; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y }, 0.016); });
+  if (q.get('walk')) window.__players.forEach((m, i) => { for (let k = 0; k < +(q.get('walk')) + i * 7; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y, pitch: 0, crouch: 0, lean: 0, speed: +(q.get('speed') || 5.5), vx: -Math.sin(m.root.rotation.y) * +(q.get('speed') || 5.5), vz: -Math.cos(m.root.rotation.y) * +(q.get('speed') || 5.5), onGround: true }, 0.016); });
   if (q.get('reload')) window.__players.forEach((m) => { for (let k = 0; k < 20; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y, pitch: 0, crouch: 0, lean: 0, speed: 0, onGround: true, reloading: true }, 0.016); });
   label.textContent = 'player models';
 } else {
