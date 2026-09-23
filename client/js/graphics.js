@@ -107,6 +107,7 @@ const GradeShader = {
     uGrain: { value: 0.025 },
     uTime: { value: 0 },
     uHurt: { value: 0 },
+    uCA: { value: 0 },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -115,10 +116,13 @@ const GradeShader = {
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
     uniform vec3 uLift, uGain;
-    uniform float uContrast, uSaturation, uVignette, uGrain, uTime, uHurt;
+    uniform float uContrast, uSaturation, uVignette, uGrain, uTime, uHurt, uCA;
     varying vec2 vUv;
     void main() {
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      // slight lateral chromatic aberration towards the frame edges, like a real lens
+      vec2 cd = vUv - 0.5;
+      vec2 co = cd * dot(cd, cd) * 0.014 * (uCA + uHurt * 1.5);
+      vec3 c = vec3(texture2D(tDiffuse, vUv + co).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - co).b);
       c = c * uGain + uLift * (1.0 - c);
       c = (c - 0.5) * uContrast + 0.5;
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -309,6 +313,7 @@ export class Graphics {
     this.grade = null;
     if (p.grade) {
       this.grade = new ShaderPass(GradeShader);
+      this.grade.uniforms.uCA.value = p.pixelRatio >= 1.5 ? 1 : 0;
       if (this.gradeCfg) this.applyGrade(this.gradeCfg);
       composer.addPass(this.grade);
     }

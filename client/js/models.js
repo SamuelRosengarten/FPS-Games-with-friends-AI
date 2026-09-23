@@ -647,6 +647,7 @@ const DOWN = new THREE.Vector3(0, -1, 0);
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
 const POLE = { r: new THREE.Vector3(0.9, -1, 0.35).normalize(), l: new THREE.Vector3(-0.9, -1, 0.2).normalize() };
 const RELAXED_L = new THREE.Vector3(-0.2, -0.46, -0.1);
+const _limb = new THREE.Euler();
 const _ik = { d: new THREE.Vector3(), dir: new THREE.Vector3(), perp: new THREE.Vector3(), u: new THREE.Vector3(), e: new THREE.Vector3(), f: new THREE.Vector3(), q: new THREE.Quaternion(), t: new THREE.Vector3(), v: new THREE.Vector3() };
 
 // Analytic two-bone IK in the aim bone's space: shoulder S -> target T, elbow bent towards pole.
@@ -739,6 +740,7 @@ export class PlayerModel {
     if (info.kind === 'knife') { this.weapon.rotation.set(0, 0, 0); this.weapon.position.set(0.02, 0.02, 0.18); }
     if (info.kind === 'grenade' || info.kind === 'bomb') this.weapon.position.set(0.0, 0.0, 0.2);
     if (this.layer != null) this.weapon.layers.set(this.layer);
+    if (this.deathT >= 0) this.weapon.visible = false;
     this.weaponMount.add(this.weapon);
   }
 
@@ -772,11 +774,26 @@ export class PlayerModel {
     this.deathX = lx;
     this.deathZ = lz;
     this.deathSpin = (Math.random() - 0.5) * 0.8;
+    this.deathHead = (Math.random() - 0.5) * 1.2;
+    if (this.weapon) this.weapon.visible = false; // it drops from the hands
+  }
+
+  // A bullet hit: the upper body jolts away from the shot (dirX, dirZ: world direction of travel).
+  flinch(dirX, dirZ, headshot = false) {
+    const yaw = this.root.rotation.y, c = Math.cos(yaw), s = Math.sin(yaw);
+    const lx = dirX * c - dirZ * s, lz = dirX * s + dirZ * c;
+    const L = Math.hypot(lx, lz) || 1;
+    this.flinchX = lx / L;
+    this.flinchZ = lz / L;
+    this.flinchHS = headshot;
+    this.flinchT = 0;
   }
 
   revive() {
     this.deathT = -1;
+    if (this.weapon) this.weapon.visible = true;
     this.chest.rotation.set(0, 0, 0);
+    this.hips.rotation.set(0, 0, 0);
     this.body.rotation.set(0, 0, 0);
     this.body.position.set(0, 0, 0);
     this.hips.position.set(0, 0.92, 0);
@@ -789,23 +806,39 @@ export class PlayerModel {
     root.rotation.y = s.yaw;
     const arms = this.arms;
     if (this.deathT >= 0) {
-      this.deathT = Math.min(1, this.deathT + dt / 0.6);
+      // knees give way, then the body topples (accelerating like a fall), hits the ground, settles;
+      // arms go limp, the head rolls
+      this.deathT = Math.min(1, this.deathT + dt / 1.05);
       const t = this.deathT;
-      const e = 1 - (1 - t) * (1 - t) * (1 - t);
-      const fall = t < 0.8 ? t / 0.8 : 1;
-      const f = fall * fall * (3 - 2 * fall);
-      const bounce = t > 0.8 ? Math.sin((t - 0.8) / 0.2 * Math.PI) * 0.04 : 0;
-      this.body.rotation.set(f * (Math.PI / 2) * this.deathZ - bounce, this.deathSpin * e, -f * (Math.PI / 2) * this.deathX * 0.9);
-      this.body.position.set(this.deathX * e * 0.35, Math.sin(Math.min(1, t * 1.6) * Math.PI) * 0.06, this.deathZ * e * 0.35);
-      this.hips.position.y = 0.92 - f * 0.74;
-      this.chest.rotation.set(-f * 0.2, 0, 0);
-      this.aim.rotation.set(-f * 0.4, 0, 0);
-      this.head.rotation.x = f * 0.5 * this.deathZ;
-      this.legs[0].thigh.rotation.x = f * 0.45;
-      this.legs[1].thigh.rotation.x = -f * 0.25;
-      this.legs[0].knee.rotation.x = -f * 0.6;
-      this.legs[1].knee.rotation.x = -f * 0.2;
-      void arms;
+      const sm = (a, b, x) => { const k = Math.max(0, Math.min(1, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
+      const buckle = sm(0, 0.28, t);
+      const fall = Math.pow(sm(0.12, 0.7, t), 1.7);
+      const u = Math.max(0, (t - 0.7) / 0.3);
+      const bounce = t > 0.7 ? Math.sin(u * Math.PI) * (1 - u) * 0.1 : 0;
+      const tip = fall * (Math.PI / 2) * 0.96 - bounce;
+      this.body.rotation.set(tip * this.deathZ, this.deathSpin * fall, -tip * this.deathX * 0.9);
+      this.body.position.set(this.deathX * fall * 0.42, 0, this.deathZ * fall * 0.42);
+      this.hips.position.set(0, 0.92 - buckle * 0.26 * (1 - fall * 0.4) - fall * 0.5, 0);
+      this.hips.rotation.set(0, 0, 0);
+      const slump = buckle * (1 - fall);
+      // (positive x tilts a bone's top backwards: the slump is forwards)
+      this.spine.rotation.set(-slump * 0.35 - fall * 0.08 * this.deathZ, 0, fall * 0.12 * this.deathX);
+      this.chest.rotation.set(-slump * 0.2 - fall * 0.1, 0, 0);
+      this.aim.rotation.set(-slump * 0.15, 0, 0);
+      this.head.rotation.set(-slump * 0.5 + fall * 0.35 * this.deathZ, fall * this.deathHead * 0.6, fall * this.deathHead * 0.4);
+      for (let i = 0; i < 2; i++) {
+        const sgn = i ? -1 : 1;
+        this.legs[i].thigh.rotation.set(slump * 0.75 + fall * (i ? 0.1 : 0.35), 0, sgn * (0.04 + fall * 0.12));
+        this.legs[i].knee.rotation.set(-slump * 1.25 - fall * (i ? 0.2 : 0.55), 0, 0);
+      }
+      const k = 1 - Math.exp(-dt * 14);
+      for (const key of ['r', 'l']) {
+        const a = arms[key], side = key === 'r' ? 1 : -1;
+        _ik.q.setFromEuler(_limb.set(0.15 + fall * 0.35 * this.deathZ, 0, side * (0.15 + fall * 0.55)));
+        a.grp.quaternion.slerp(_ik.q, k);
+        _ik.q.setFromEuler(_limb.set(0.35 + slump * 0.4, 0, 0));
+        a.elbow.quaternion.slerp(_ik.q, k);
+      }
       return;
     }
     const c = s.crouch || 0;
@@ -822,8 +855,16 @@ export class PlayerModel {
     else this.walkPhase *= 0.9;
     const ph = this.walkPhase;
     this.breath += dt;
-    const hipsY = 0.92 - c * 0.4 - (moving ? Math.abs(Math.sin(ph)) * 0.03 * amp : 0);
+    // landing dip after a jump or fall
+    if (s.onGround && this.wasAir) this.landT = 0;
+    this.wasAir = !s.onGround;
+    this.landT = Math.min(1, (this.landT ?? 1) + dt / 0.35);
+    const land = Math.sin(this.landT * Math.PI) * (1 - this.landT) * 0.16;
+    const hipsY = 0.92 - c * 0.4 - (moving ? Math.abs(Math.sin(ph)) * 0.035 * amp : 0) - land;
     this.hips.position.y = hipsY;
+    // weight over the stance leg: lateral sway and pelvis roll while walking, a slow shift when idle
+    this.hips.position.x = moving ? Math.sin(ph) * 0.022 * amp : Math.sin(this.breath * 0.45) * 0.008;
+    this.hips.rotation.z = moving ? Math.sin(ph) * 0.05 * amp : Math.sin(this.breath * 0.45) * 0.012;
     this.hips.rotation.y = moving ? sk * 0.35 * Math.sign(fk || 1) : 0;
     const air = !s.onGround ? 0.5 : 0;
     for (let i = 0; i < 2; i++) {
@@ -832,11 +873,13 @@ export class PlayerModel {
       const swing = moving ? Math.sin(phase) * 0.6 * amp : 0;
       const bend = moving ? Math.max(0, Math.sin(phase + Math.PI / 2)) * 0.9 * amp : 0;
       this.legs[i].thigh.rotation.x = swing * Math.max(Math.abs(fk), 0.35) + c * 1.25 + air * (i ? 0.2 : 0.7);
-      this.legs[i].knee.rotation.x = -bend - c * 2.0 - air * 0.9;
+      this.legs[i].knee.rotation.x = -bend - (moving ? 0.12 * amp : 0.04) - c * 2.0 - air * 0.9 - land * 1.4;
+      if (land) this.legs[i].thigh.rotation.x += land * 0.7;
       this.legs[i].thigh.rotation.z = sgn * 0.03 + (moving ? Math.sin(phase) * 0.25 * amp * sk * sgn : 0);
     }
-    this.spine.rotation.x = c * 0.25 + (moving ? 0.05 * Math.sign(fk || 1) : 0) + Math.sin(this.breath * 1.7) * 0.012;
-    this.spine.rotation.z = -(s.lean || 0) * 0.5;
+    const run = Math.max(0, Math.min(1, (speed - 3.5) / 2));
+    this.spine.rotation.x = c * 0.25 + (moving ? (0.05 + run * 0.1) * Math.sign(fk || 1) : 0) + Math.sin(this.breath * 1.7) * 0.012 + land * 0.4;
+    this.spine.rotation.z = -(s.lean || 0) * 0.5 - this.hips.rotation.z * 0.8;
     this.spine.rotation.y = (moving ? Math.sin(ph) * 0.06 * amp : 0) - this.hips.rotation.y;
     const pitch = s.pitch || 0;
     this.recoil *= Math.exp(-dt * 14);
@@ -856,6 +899,14 @@ export class PlayerModel {
     const chestX = Math.max(-0.3, Math.min(0.25, aimX * 0.3));
     this.chest.rotation.set(chestX, tw * 0.7, 0);
     this.aim.rotation.set(aimX - chestX, tw * 0.3, 0);
+    if (this.flinchT !== undefined && this.flinchT < 1) {
+      this.flinchT = Math.min(1, this.flinchT + dt / 0.3);
+      const e = Math.sin(this.flinchT * Math.PI) * (1 - this.flinchT * 0.4);
+      this.chest.rotation.x += this.flinchZ * 0.2 * e;
+      this.chest.rotation.z -= this.flinchX * 0.16 * e;
+      this.head.rotation.x += (this.flinchHS ? 0.5 : 0.12) * this.flinchZ * e;
+      this.head.rotation.z -= (this.flinchHS ? 0.35 : 0.06) * this.flinchX * e;
+    }
     // reload: weapon rolls towards the body, support hand goes to the magazine and back
     const wantReload = s.reloading ? 1 : 0;
     this.reloadK += (wantReload - this.reloadK) * Math.min(1, dt * 10);

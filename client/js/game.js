@@ -333,6 +333,8 @@ export class ClientGame {
   onHit(m) {
     this.hud.hitmarker(m.hs, m.kill);
     this.audio.hitmarker(m.hs, m.kill, m.armor);
+    const target = this.players.get(m.id);
+    if (target && !m.kill && target.state) target.model.flinch(target.state.x - this.me.x, target.state.z - this.me.z, m.hs);
     if (m.p) {
       this.effects.blood(m.p, [0, 0, 0]);
       const eye = eyePosition(this.me);
