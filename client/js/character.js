@@ -9,7 +9,7 @@
 // leather and rubber detail from the shared surface shader. Geometry is cached per look.
 
 import * as THREE from 'three';
-import { Builder, superEllipsoid, pathTube, SURF } from './surface.js';
+import { Builder, superEllipsoid, pathTube, SURF, weldNormals } from './surface.js';
 
 export const UPPER_ARM = 0.3, FORE_ARM = 0.3;
 // Bind pose for the arms (they are driven by two-bone IK every frame).
@@ -112,25 +112,6 @@ const WORLD = { x: V(1, 0, 0), y: V(0, 1, 0), z: V(0, 0, 1) };
 const ring = (f, rx, rz, w, extra = {}) => ({ c: f.c.clone(), x: f.x, z: f.z, rx, rz, w, ...extra });
 const wring = (y, rx, rz, w, extra = {}, zc = 0, xc = 0) => ({ c: V(xc, y, zc), x: WORLD.x, z: WORLD.z, rx, rz, w, ...extra });
 const mixColor = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t);
-
-// Average normals of vertices that share a position (hides UV seams after deforming a sphere).
-function weldNormals(geo) {
-  const P = geo.attributes.position, N = geo.attributes.normal;
-  const map = new Map();
-  for (let i = 0; i < P.count; i++) {
-    const k = `${Math.round(P.getX(i) * 1e4)},${Math.round(P.getY(i) * 1e4)},${Math.round(P.getZ(i) * 1e4)}`;
-    if (!map.has(k)) map.set(k, []);
-    map.get(k).push(i);
-  }
-  for (const ids of map.values()) {
-    if (ids.length < 2) continue;
-    let x = 0, y = 0, z = 0;
-    for (const i of ids) { x += N.getX(i); y += N.getY(i); z += N.getZ(i); }
-    const l = Math.hypot(x, y, z) || 1;
-    for (const i of ids) N.setXYZ(i, x / l, y / l, z / l);
-  }
-  return geo;
-}
 
 // Band around an ellipse (in a bone's local XZ plane) between heights y0..y1 with some thickness.
 function bandRings(y0, y1, rx, rz, thick, w0, w1, xc = 0, zc = 0) {

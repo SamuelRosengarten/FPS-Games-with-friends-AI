@@ -489,4 +489,24 @@ export function pathTube(points, radius, seg = 6) {
   return new THREE.TubeGeometry(curve, Math.max(4, Math.min(24, points.length * 2)), radius, seg, false);
 }
 
+// Average normals of vertices that share a position (hides UV seams after deforming a sphere).
+export function weldNormals(geo) {
+  const P = geo.attributes.position, N = geo.attributes.normal;
+  const map = new Map();
+  for (let i = 0; i < P.count; i++) {
+    const k = `${Math.round(P.getX(i) * 1e4)},${Math.round(P.getY(i) * 1e4)},${Math.round(P.getZ(i) * 1e4)}`;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(i);
+  }
+  for (const ids of map.values()) {
+    if (ids.length < 2) continue;
+    let x = 0, y = 0, z = 0;
+    for (const i of ids) { x += N.getX(i); y += N.getY(i); z += N.getZ(i); }
+    const l = Math.hypot(x, y, z) || 1;
+    for (const i of ids) N.setXYZ(i, x / l, y / l, z / l);
+  }
+  return geo;
+}
+
+
 export { hash as surfHash };

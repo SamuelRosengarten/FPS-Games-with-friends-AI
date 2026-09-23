@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { hash2 } from '../shared/constants.js';
 import { Skyline } from './skyline.js';
+import { Builder, bakedMaterial, superEllipsoid, weldNormals, SURF } from './surface.js';
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
@@ -243,6 +244,26 @@ function signTex(text, color) {
 
 // ------------------------------------------------------------------ decor
 
+// One filled sandbag: a pillow with a folded, narrower tied end and lumpy fabric.
+function sandbagGeometry(seed) {
+  const g = superEllipsoid(0.29, 0.078, 0.16, 0.55, 0.3, 10, 5);
+  const P = g.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    let x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+    const t = x / 0.29;
+    if (t > 0.62) { const k = (t - 0.62) / 0.38; z *= 1 - k * 0.35; y *= 1 - k * 0.45; }
+    if (y > 0) y *= 0.85;
+    y += (hash2(Math.round(x * 40) + seed * 97, Math.round(z * 40)) - 0.5) * 0.012;
+    x += (hash2(Math.round(z * 30), Math.round(y * 30) + seed) - 0.5) * 0.01;
+    P.setXYZ(i, x, y, z);
+  }
+  g.computeVertexNormals();
+  weldNormals(g);
+  const b = new Builder();
+  b.add(g, { color: 0xffffff, tex: SURF.fabric, texK: 1.4, rough: 0.97 });
+  return b.build(false);
+}
+
 // Fictional flag designs.
 function flagTex(design) {
   return cached('flag-' + design, () => canvasTex(256, 154, (g, w, h) => {
@@ -379,6 +400,10 @@ export class Decor {
       ['signs', () => this.buildSigns(cfg.signs || [])],
       ['decals', () => this.buildDecals(cfg.decals || ['crack', 'stain'])],
       ['puddles', () => cfg.puddles && this.buildPuddles(cfg.puddles)],
+      ['sandbags', () => this.buildSandbags()],
+      ['containers', () => this.buildContainers()],
+      ['crates', () => this.buildCrateTrim()],
+      ['trucks', () => this.buildTrucks()],
       ['flags', () => cfg.flags && this.buildFlags(cfg.flags)],
       ['fountain', () => cfg.fountain && this.buildFountain(cfg.fountain)],
       ['skyline', () => cfg.skyline && this.buildSkyline(cfg.skyline)],
@@ -399,6 +424,7 @@ export class Decor {
     const up = this.map.upper;
     for (const b of this.map.boxes) {
       if (b.kind !== 'wall' && b.kind !== 'sill' && b.kind !== 'cover') continue;
+      if (b.kind === 'cover' && b.mat === 'sandbag') continue; // real bags instead
       // ground-floor walls that carry a second storey have no visible top
       if (up && Math.abs(b.max[1] - up.floorY) < 0.05) continue;
       const w = b.max[0] - b.min[0], d = b.max[2] - b.min[2], h = b.max[1];
@@ -912,6 +938,223 @@ export class Decor {
     mesh.receiveShadow = true;
     mesh.userData.noAO = true;
     this.group.add(mesh);
+  }
+
+  // Sandbag walls: the collision box is dressed with individual stacked bags in a running bond.
+  buildSandbags() {
+    const boxes = this.map.boxes.filter((b) => b.kind === 'cover' && b.mat === 'sandbag');
+    if (!boxes.length) return;
+    const templates = [sandbagGeometry(1), sandbagGeometry(2), sandbagGeometry(3)];
+    const items = [[], [], []];
+    const BL = 0.56;
+    let seq = 0;
+    for (const b of boxes) {
+      const w = b.max[0] - b.min[0], d = b.max[2] - b.min[2], h = b.max[1] - b.min[1];
+      const alongX = w >= d;
+      const L = alongX ? w : d, D = alongX ? d : w;
+      const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2, y0 = b.min[1];
+      const courses = Math.max(1, Math.round(h / 0.155));
+      const ch = h / courses;
+      const place = (u, v, y, across) => {
+        const k = seq++;
+        const x = alongX ? cx + u : cx + v, z = alongX ? cz + v : cz + u;
+        const rot = (alongX !== across ? 0 : Math.PI / 2) + (hash2(k, 3) - 0.5) * 0.16 + (hash2(k, 9) > 0.5 ? Math.PI : 0);
+        items[k % 3].push([x, y, z, rot, (hash2(k, 5) - 0.5) * 0.08, 0.94 + hash2(k, 7) * 0.12, k]);
+      };
+      for (let k = 0; k < courses; k++) {
+        const y = y0 + ch * (k + 0.5);
+        const off = (k % 2) * BL * 0.5;
+        for (let u = -L / 2 + BL * 0.5 - off; u < L / 2 - BL * 0.3; u += BL) {
+          if (u < -L / 2 + BL * 0.3) continue;
+          for (const sv of [-1, 1]) place(u, sv * (D / 2 - 0.1), y, false);
+        }
+        const inner = D - 0.34;
+        const m = Math.max(1, Math.round(inner / BL));
+        for (let j = 0; j < m; j++) {
+          const v = -inner / 2 + (j + 0.5) * (inner / m);
+          for (const su of [-1, 1]) place(su * (L / 2 - 0.1), v, y, true);
+        }
+      }
+      const rows = Math.max(1, Math.round(D / 0.33));
+      for (let r = 0; r < rows; r++) {
+        const v = -D / 2 + (r + 0.5) * (D / rows);
+        const off = (r % 2) * BL * 0.5;
+        for (let u = -L / 2 + BL * 0.5 - off; u < L / 2 - BL * 0.3; u += BL) {
+          if (u < -L / 2 + BL * 0.3) continue;
+          place(u, v, y0 + h - 0.045, false);
+        }
+      }
+    }
+    const tints = [0xb3a383, 0xa69676, 0x9b8c6c, 0xbcab88, 0x8e8163];
+    const col = new THREE.Color();
+    templates.forEach((geo, t) => {
+      const list = items[t];
+      if (!list.length) return;
+      const mesh = new THREE.InstancedMesh(geo, bakedMaterial(), list.length);
+      list.forEach(([x, y, z, rot, tilt, sc, k], i) => {
+        tmpM.compose(tmpP.set(x, y, z), tmpQ.setFromEuler(new THREE.Euler(tilt, rot, tilt * 0.5, 'YXZ')), tmpS.set(sc, 0.95 + (sc - 1) * 0.5, sc));
+        mesh.setMatrixAt(i, tmpM);
+        mesh.setColorAt(i, col.set(tints[k % tints.length]));
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.instanceColor.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    });
+  }
+
+  // Shipping containers: corner posts and castings, top / bottom rails and door locking bars.
+  buildContainers() {
+    const byMat = new Map();
+    const steel = new Batch();
+    for (const b of this.map.boxes) {
+      if (b.kind !== 'container') continue;
+      if (!byMat.has(b.mat)) byMat.set(b.mat, new Batch());
+      const frame = byMat.get(b.mat);
+      const w = b.max[0] - b.min[0], h = b.max[1] - b.min[1], d = b.max[2] - b.min[2];
+      const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2, y0 = b.min[1];
+      const o = 0.02;
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const x = cx + sx * (w / 2 - 0.06 + o), z = cz + sz * (d / 2 - 0.06 + o);
+        frame.box(0.16, h, 0.16, x, y0 + h / 2, z);
+        for (const top of [0, 1]) steel.box(0.19, 0.13, 0.19, x + sx * 0.012, y0 + (top ? h - 0.065 : 0.065), z + sz * 0.012);
+      }
+      // rails along all four sides, top and bottom
+      for (const top of [0, 1]) {
+        const y = y0 + (top ? h - 0.07 : 0.07);
+        for (const sz of [-1, 1]) frame.box(w - 0.3, 0.14, 0.1, cx, y, cz + sz * (d / 2 + o - 0.03));
+        for (const sx of [-1, 1]) frame.box(0.1, 0.14, d - 0.3, cx + sx * (w / 2 + o - 0.03), y, cz);
+      }
+      // door end: four vertical locking bars with handles and cam keepers
+      const alongX = w >= d;
+      const endW = alongX ? d : w;
+      for (let k = 0; k < 4; k++) {
+        const t = -endW / 2 + endW * (0.14 + k * 0.24);
+        const px = alongX ? cx + w / 2 + o + 0.035 : cx + t, pz = alongX ? cz + t : cz + d / 2 + o + 0.035;
+        tmpM.compose(tmpP.set(px, y0 + h / 2, pz), tmpQ.identity(), tmpS.set(1, 1, 1));
+        steel.add(new THREE.CylinderGeometry(0.018, 0.018, h - 0.3, 8), tmpM);
+        const hx = alongX ? px + 0.03 : px + 0.08, hz = alongX ? pz + 0.08 : pz + 0.03;
+        steel.box(alongX ? 0.03 : 0.2, 0.04, alongX ? 0.2 : 0.03, hx, y0 + h * 0.45, hz);
+        for (const top of [0, 1]) steel.box(0.07, 0.07, 0.07, px, y0 + (top ? h - 0.2 : 0.2), pz);
+      }
+    }
+    for (const [mat, batch] of byMat) {
+      this.mesh(batch.build(this.tex.material(mat).userData.scale || 6), withoutVertexColors(this.tex.material(mat), 0.82), { cast: true });
+    }
+    this.mesh(steel.build(), new THREE.MeshStandardMaterial({ color: 0x3b3a38, metalness: 0.75, roughness: 0.55 }), { cast: true });
+  }
+
+  // Box truck: the larger 'truck' box is the cargo body, the smaller one next to it the cab.
+  buildTrucks() {
+    const boxes = this.map.boxes.filter((b) => b.kind === 'truck');
+    if (!boxes.length) return;
+    const vol = (b) => (b.max[0] - b.min[0]) * (b.max[2] - b.min[2]);
+    const bodyBox = boxes.reduce((a, b) => (vol(b) > vol(a) ? b : a));
+    const cabBox = boxes.find((b) => b !== bodyBox) || null;
+    const paint = new Batch(), light = new Batch(), steel = new Batch(), rubber = new Batch(), glass = new Batch(), chrome = new Batch(), lamps = new Batch();
+    const bw = bodyBox.max[0] - bodyBox.min[0], bd = bodyBox.max[2] - bodyBox.min[2], bh = bodyBox.max[1] - bodyBox.min[1];
+    const alongX = bw >= bd;
+    const L = alongX ? bw : bd, W = alongX ? bd : bw;
+    const bc = [(bodyBox.min[0] + bodyBox.max[0]) / 2, (bodyBox.min[2] + bodyBox.max[2]) / 2];
+    // forward direction (towards the cab)
+    let f = 1;
+    if (cabBox) {
+      const cc = [(cabBox.min[0] + cabBox.max[0]) / 2, (cabBox.min[2] + cabBox.max[2]) / 2];
+      f = Math.sign(alongX ? cc[0] - bc[0] : cc[1] - bc[1]) || 1;
+    }
+    // helpers in truck space: u along the length (towards the cab), v across, y up
+    const P = (u, v) => (alongX ? [bc[0] + u * f, bc[1] + v] : [bc[0] + v, bc[1] + u * f]);
+    const add = (batch, lu, h, lv, u, y, v) => { const [x, z] = P(u, v); batch.box(alongX ? lu : lv, h, alongX ? lv : lu, x, y, z); };
+    const wheel = (u, v, r = 0.48, w = 0.3) => {
+      const [x, z] = P(u, v);
+      tmpM.compose(tmpP.set(x, r, z), tmpQ.setFromEuler(new THREE.Euler(alongX ? Math.PI / 2 : 0, 0, alongX ? 0 : Math.PI / 2)), tmpS.set(1, 1, 1));
+      rubber.add(new THREE.CylinderGeometry(r, r, w, 22), tmpM);
+      const hv = v + Math.sign(v) * (w / 2 + 0.005);
+      const [hx, hz] = P(u, hv);
+      tmpM.compose(tmpP.set(hx, r, hz), tmpQ.setFromEuler(new THREE.Euler(alongX ? Math.PI / 2 : 0, 0, alongX ? 0 : Math.PI / 2)), tmpS.set(1, 1, 1));
+      chrome.add(new THREE.CylinderGeometry(r * 0.52, r * 0.55, 0.02, 16), tmpM);
+    };
+    // cargo body on the chassis
+    const y0 = 1.0;
+    add(light, L - 0.1, bh - y0, W, 0, y0 + (bh - y0) / 2, 0);
+    for (let u = -L / 2 + 0.3; u < L / 2 - 0.2; u += 0.62) for (const sv of [-1, 1]) add(light, 0.06, bh - y0 - 0.1, 0.03, u, y0 + (bh - y0) / 2, sv * (W / 2 + 0.012));
+    for (const top of [0, 1]) for (const sv of [-1, 1]) add(steel, L - 0.1, 0.08, 0.05, 0, top ? bh - 0.04 : y0 + 0.04, sv * (W / 2 + 0.02));
+    // rear doors with locking bars
+    add(steel, 0.04, bh - y0 - 0.1, W - 0.1, -L / 2 + 0.03, y0 + (bh - y0) / 2, 0);
+    for (const sv of [-0.3, -0.12, 0.12, 0.3]) { const [x, z] = P(-L / 2 + 0.0, sv * W); tmpM.compose(tmpP.set(x, y0 + (bh - y0) / 2, z), tmpQ.identity(), tmpS.set(1, 1, 1)); chrome.add(new THREE.CylinderGeometry(0.018, 0.018, bh - y0 - 0.2, 8), tmpM); }
+    add(lamps, 0.03, 0.08, 0.16, -L / 2 - 0.01, y0 - 0.1, W / 2 - 0.15);
+    add(lamps, 0.03, 0.08, 0.16, -L / 2 - 0.01, y0 - 0.1, -W / 2 + 0.15);
+    // chassis, bumpers, fuel tank, underride guard, mud flaps
+    for (const sv of [-0.3, 0.3]) add(steel, L + (cabBox ? 1.6 : 0), 0.22, 0.12, cabBox ? 0.8 : 0, 0.82, sv * W);
+    add(steel, 0.12, 0.2, W, -L / 2 - 0.02, 0.62, 0);
+    for (const sv of [-1, 1]) add(steel, L * 0.45, 0.06, 0.03, 0.05 * L, 0.6, sv * (W / 2 - 0.02));
+    { const [x, z] = P(L * 0.28, -(W / 2 - 0.25)); tmpM.compose(tmpP.set(x, 0.72, z), tmpQ.setFromEuler(new THREE.Euler(alongX ? 0 : Math.PI / 2, 0, alongX ? Math.PI / 2 : 0)), tmpS.set(1, 1, 1)); chrome.add(new THREE.CylinderGeometry(0.24, 0.24, 0.9, 16), tmpM); }
+    for (const u of [-L / 2 + 0.75, -L / 2 + 1.75]) for (const sv of [-1, 1]) { wheel(u, sv * (W / 2 - 0.18)); wheel(u, sv * (W / 2 - 0.5)); }
+    for (const sv of [-1, 1]) add(rubber, 0.02, 0.45, 0.5, -L / 2 + 0.2, 0.42, sv * (W / 2 - 0.3));
+    // cab
+    if (cabBox) {
+      const cw = cabBox.max[0] - cabBox.min[0], cd = cabBox.max[2] - cabBox.min[2];
+      const CL = (alongX ? cw : cd) + 0.3, CW = W;
+      const cu = L / 2 + 0.15 + CL / 2;
+      const top = 2.55;
+      add(paint, CL, 0.75, CW, cu, 1.3, 0);                       // lower body
+      add(paint, CL - 0.35, top - 1.68, CW, cu - 0.17, (top + 1.68) / 2, 0); // cabin
+      add(paint, CL - 0.3, 0.06, CW + 0.02, cu - 0.15, top + 0.03, 0);       // roof lip
+      // windshield (front) and side windows
+      add(glass, 0.03, 0.62, CW - 0.16, cu + CL / 2 - 0.35 + 0.012, 2.05, 0);
+      for (const sv of [-1, 1]) add(glass, CL * 0.42, 0.5, 0.02, cu + CL * 0.05, 2.08, sv * (CW / 2 + 0.006));
+      // grille, bumper, headlights, mirrors, steps, exhaust stack
+      add(steel, 0.03, 0.5, CW * 0.6, cu + CL / 2 + 0.01, 1.3, 0);
+      for (let k = 0; k < 5; k++) add(chrome, 0.035, 0.03, CW * 0.6, cu + CL / 2 + 0.02, 1.1 + k * 0.1, 0);
+      add(steel, 0.18, 0.2, CW + 0.1, cu + CL / 2 + 0.06, 0.72, 0);
+      for (const sv of [-1, 1]) {
+        add(lamps, 0.03, 0.12, 0.22, cu + CL / 2 + 0.015, 1.05, sv * (CW / 2 - 0.2));
+        add(steel, 0.05, 0.3, 0.04, cu + CL / 2 - 0.45, 2.1, sv * (CW / 2 + 0.2));
+        add(steel, 0.04, 0.03, 0.22, cu + CL / 2 - 0.45, 2.2, sv * (CW / 2 + 0.1));
+        add(steel, 0.3, 0.03, 0.18, cu - 0.1, 0.55, sv * (CW / 2 + 0.03));
+        wheel(cu + 0.05, sv * (CW / 2 - 0.2));
+      }
+      { const [x, z] = P(cu - CL / 2 - 0.05, CW / 2 - 0.15); tmpM.compose(tmpP.set(x, 2.05, z), tmpQ.identity(), tmpS.set(1, 1, 1)); chrome.add(new THREE.CylinderGeometry(0.06, 0.06, 1.7, 12), tmpM); }
+    }
+    const metalTex = this.tex.material('metal');
+    this.mesh(light.build(2), withoutVertexColors(metalTex, 1.25), { cast: true });
+    this.mesh(paint.build(), new THREE.MeshStandardMaterial({ color: 0x8e2619, metalness: 0.35, roughness: 0.32, envMapIntensity: 1.2 }), { cast: true });
+    this.mesh(steel.build(), new THREE.MeshStandardMaterial({ color: 0x2a2b2d, metalness: 0.6, roughness: 0.55 }), { cast: true });
+    this.mesh(chrome.build(), new THREE.MeshStandardMaterial({ color: 0xa0a4a8, metalness: 1, roughness: 0.28 }), { cast: true });
+    this.mesh(rubber.build(), new THREE.MeshStandardMaterial({ color: 0x141414, metalness: 0, roughness: 0.92 }), { cast: true });
+    this.mesh(glass.build(), new THREE.MeshStandardMaterial({ color: 0x1b242b, metalness: 0.6, roughness: 0.05, envMapIntensity: 1.6 }), { cast: false });
+    this.mesh(lamps.build(), new THREE.MeshStandardMaterial({ color: 0xffe9c8, emissive: 0x332a1e, roughness: 0.2, metalness: 0.2 }), { cast: false });
+  }
+
+  // Steel corner caps on wooden crates, carry handles on the military boxes.
+  buildCrateTrim() {
+    const caps = new Batch();
+    const handles = new Batch();
+    for (const b of this.map.boxes) {
+      if (b.kind !== 'crate') continue;
+      const w = b.max[0] - b.min[0], h = b.max[1] - b.min[1], d = b.max[2] - b.min[2];
+      const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2, cy = (b.min[1] + b.max[1]) / 2;
+      if (b.mat === 'crate') {
+        const s = 0.085;
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+          caps.box(s, s, s, cx + sx * (w / 2 - s / 2 + 0.006), cy + sy * (h / 2 - s / 2 + 0.006), cz + sz * (d / 2 - s / 2 + 0.006));
+        }
+      } else {
+        const alongX = w >= d;
+        for (const sd of [-1, 1]) {
+          const x = alongX ? cx : cx + sd * (w / 2 + 0.02), z = alongX ? cz + sd * (d / 2 + 0.02) : cz;
+          for (let k = 0; k < Math.max(1, Math.round(h / 1.0)); k++) {
+            const y = b.min[1] + (k + 0.62) * Math.min(1, h);
+            handles.box(alongX ? 0.18 : 0.03, 0.03, alongX ? 0.03 : 0.18, x, y, z);
+            handles.box(alongX ? 0.03 : 0.05, 0.05, alongX ? 0.05 : 0.03, x - (alongX ? 0.09 : 0), y + 0.01, z - (alongX ? 0 : 0.09));
+            handles.box(alongX ? 0.03 : 0.05, 0.05, alongX ? 0.05 : 0.03, x + (alongX ? 0.09 : 0), y + 0.01, z + (alongX ? 0 : 0.09));
+          }
+        }
+      }
+    }
+    this.mesh(caps.build(), new THREE.MeshStandardMaterial({ color: 0x3a3632, metalness: 0.7, roughness: 0.5 }), { cast: false });
+    this.mesh(handles.build(), new THREE.MeshStandardMaterial({ color: 0x1e1f1d, metalness: 0.4, roughness: 0.6 }), { cast: false });
   }
 
   // Highest surface under a point (walls, roofs, raised floors) for things standing on top of the map.
