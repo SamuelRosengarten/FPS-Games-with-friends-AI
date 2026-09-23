@@ -2,7 +2,7 @@
 
 import {
   TEAM, PLAYER, FLAG, ECONOMY, MAX_LAG_COMP, USE_RANGE, BOMB_RADIUS, BOMB_DAMAGE, MODES,
-  clamp, viewDir, isEnemy, wrapAngle,
+  clamp, viewDir, isEnemy, wrapAngle, TAG_MS, tagSlow,
 } from '../shared/constants.js';
 import { WEAPONS, GEAR, GRENADES, DEFAULT_PISTOL, GUNGAME_ORDER, computeDamage, itemPrice } from '../shared/weapons.js';
 import { loadMap } from '../shared/maps/index.js';
@@ -15,6 +15,9 @@ import { BotBrain } from './bot.js';
 const SURFACE_IDX = { stone: 0, wood: 1, metal: 2, sand: 3, flesh: 4 };
 const HISTORY_MS = 1000;
 const GRENADE_R = 0.07;
+const REINFORCE_PER_PLAYER = 2;
+const REINFORCE_TIME = 2500;
+const REINFORCE_RANGE = 2.3;
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -47,7 +50,7 @@ export class Match {
     this.lastScoreboard = 0;
     this.endsAt = 0;
     this.ended = false;
-    this.botPlan = { site: 'A', alertSite: null, alertAt: 0 };
+    this.botPlan = { site: 'A', alertSite: null, alertAt: 0, claimed: new Set(), smoked: new Set() };
     this.feed = [];
   }
 
@@ -158,7 +161,7 @@ export class Match {
         score: this.score,
         bomb: this.bombInfo(),
         smokes: this.smokes.map((s) => [s.id, r2(s.x), r2(s.y), r2(s.z), s.until, s.start]),
-        walls: this.map.destructibles.map((id) => this.world.byId.get(id)).filter((b) => b.hp < 100).map((b) => [b.id, Math.max(0, Math.round(b.hp))]),
+        walls: this.map.destructibles.map((id) => this.world.byId.get(id)).filter((b) => b.hp < 100 || b.reinforced).map((b) => [b.id, Math.max(0, Math.round(b.hp)), b.reinforced ? 1 : 0]),
         drops: this.drops.map((d) => [d.id, d.wid, r2(d.x), r2(d.y), r2(d.z)]),
       },
     };
@@ -194,6 +197,7 @@ export class Match {
       p.cur = p.inv.primary ? 'primary' : p.inv.secondary ? 'secondary' : 'knife';
       p.roundKills = 0;
       p.roundDmg = 0;
+      p.reinforceLeft = p.team === TEAM.DEF ? REINFORCE_PER_PLAYER : 0;
     }
     // bomb to a random attacker (prefer humans a bit less than bots so humans can choose)
     this.bomb = null;
@@ -203,7 +207,7 @@ export class Match {
       carrier.inv.bomb = true;
       this.bomb = { state: 'carried', carrier: carrier.id, x: 0, y: 0, z: 0 };
     }
-    this.botPlan = { site: Math.random() < 0.5 ? 'A' : 'B', alertSite: null, alertAt: 0 };
+    this.botPlan = { site: Math.random() < 0.5 ? 'A' : 'B', alertSite: null, alertAt: 0, claimed: new Set(), smoked: new Set() };
     for (const p of [...att, ...def]) {
       this.sendYou(p);
       if (p.brain) p.brain.onRoundStart();
@@ -217,6 +221,7 @@ export class Match {
       const b = this.world.byId.get(id);
       b.hp = 100;
       b.active = true;
+      b.reinforced = false;
     }
     this.wallUpdates.clear();
     this.grenades = [];
@@ -254,7 +259,10 @@ export class Match {
     if (reason === 'defused' && this.bomb?.defuser) mvp = this.players.get(this.bomb.defuser) || mvp;
     if (reason === 'bomb' && this.bomb?.planter) mvp = this.players.get(this.bomb.planter) || mvp;
     if (mvp) mvp.stats.mvp++;
-    for (const p of this.players.values()) this.sendYou(p);
+    for (const p of this.players.values()) {
+      this.sendYou(p);
+      if (p.alive) this.sendDamageReport(p);
+    }
     this.broadcastRound({ winner, reason, mvp: mvp?.id ?? null });
     this.sendScoreboard();
   }
@@ -349,6 +357,10 @@ export class Match {
     p.nextFire = 0;
     p.blindUntil = 0;
     p.dmgTaken = new Map();
+    p.dmgLog = { given: new Map(), taken: new Map() };
+    p.reinforceEnd = 0;
+    p.reinforceBox = null;
+    p.tagUntil = 0;
     p.spawnedAt = this.now;
     p.spawnProtectUntil = this.modeInfo.rounds ? 0 : this.now + 2000;
     p.buyUntil = this.modeInfo.rounds ? 0 : this.now + 12000;
@@ -420,6 +432,7 @@ export class Match {
     if (this.phase === 'loading') { this.checkLoaded(); return; }
     if (this.phase === 'freeze' && now >= this.phaseEnd) {
       this.phase = 'live';
+      this.liveAt = now;
       this.phaseEnd = this.modeInfo.rounds ? now + this.settings.roundTime * 1000 : this.endsAt;
       this.broadcastRound();
     } else if (this.phase === 'live' && this.modeInfo.rounds && now >= this.phaseEnd) {
@@ -471,7 +484,7 @@ export class Match {
     }
 
     if (this.wallUpdates.size) {
-      this.game.broadcast({ t: 'walls', d: [...this.wallUpdates.entries()].map(([id, hp]) => [id, Math.max(0, Math.round(hp))]) });
+      this.game.broadcast({ t: 'walls', d: [...this.wallUpdates.keys()].map((id) => { const b = this.world.byId.get(id); return [id, Math.max(0, Math.round(b.hp)), b.reinforced ? 1 : 0]; }) });
       this.wallUpdates.clear();
     }
 
@@ -491,7 +504,9 @@ export class Match {
   speedMulFor(p) {
     const item = this.currentItem(p);
     const w = item ? WEAPONS[item.id] : WEAPONS.knife;
-    return (p.ads && w.scopedSpeed) ? w.scopedSpeed : w.speed;
+    let mul = (p.ads && w.scopedSpeed) ? w.scopedSpeed : w.speed;
+    if (p.tagUntil > this.now) mul *= 1 - tagSlow(p.tagAmt || 0, (p.tagUntil - this.now) / TAG_MS);
+    return mul;
   }
 
   currentItem(p) {
@@ -504,7 +519,7 @@ export class Match {
     }
   }
 
-  isUsing(p) { return !!(p.plantEnd || p.defuseEnd); }
+  isUsing(p) { return !!(p.plantEnd || p.defuseEnd || p.reinforceEnd); }
 
   sendSnapshot(now) {
     const ps = [];
@@ -516,6 +531,7 @@ export class Match {
       if (p.walking) flags |= FLAG.WALK;
       if (p.plantEnd) flags |= FLAG.PLANT;
       if (p.defuseEnd) flags |= FLAG.DEFUSE;
+      if (p.reinforceEnd) flags |= FLAG.REINFORCE;
       if (p.reloadUntil) flags |= FLAG.RELOAD;
       if (p.ads) flags |= FLAG.ADS;
       if (p.inv.bomb) flags |= FLAG.BOMB;
@@ -554,7 +570,7 @@ export class Match {
       t: 'you', alive: p.alive, hp: Math.max(0, Math.round(p.hp)), armor: Math.round(p.armor), helmet: p.helmet, kit: p.kit,
       money: p.money, cur: p.cur,
       inv: { primary: pack(p.inv.primary), secondary: pack(p.inv.secondary), nades: p.inv.nades, bomb: p.inv.bomb },
-      gg: p.ggLevel, buyUntil: p.buyUntil || 0, team: p.team,
+      gg: p.ggLevel, buyUntil: p.buyUntil || 0, team: p.team, rf: p.reinforceLeft || 0,
     });
   }
 
@@ -694,6 +710,10 @@ export class Match {
       const wall = walls[wi], hit = hits[hi];
       if (wall && (!hit || wall.t <= hit.t)) {
         wi++;
+        if (wall.box.reinforced) {
+          end = { t: wall.t, n: wall.n, surface: SURFACE_IDX.metal };
+          break;
+        }
         const info = materialInfo(wall.box.mat);
         if (wall.box.destructible) this.damageWall(wall.box, w.damage * w.wallDmg * mul * 0.5);
         const thick = wall.tOut - wall.t;
@@ -819,7 +839,7 @@ export class Match {
     const g = {
       id: this.nextEnt++, type, thrower: p.id, team: p.team,
       x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2],
-      explodeAt: now + w.fuse * 1000, restTime: 0, maxAt: now + 6000,
+      explodeAt: w.sticky ? now + 6000 : now + w.fuse * 1000, restTime: 0, maxAt: now + 6000,
     };
     this.grenades.push(g);
     this.game.broadcast({ t: 'snd', s: 'throw', id: p.id, g: type });
@@ -875,6 +895,7 @@ export class Match {
         p.deployUntil = this.now + w.deploy * 1000;
         if (free) p.loadout[w.slot] = item;
       } else if (w.slot === 'grenade') {
+        if (w.team && this.mode === 'defuse' && p.team !== w.team) return;
         const total = GRENADES.reduce((s, g) => s + p.inv.nades[g], 0);
         if (p.inv.nades[item] >= w.max || total >= 4) return;
         if (!free && p.money < price) return;
@@ -914,6 +935,13 @@ export class Match {
       attacker.stats.dmg += dealt;
       attacker.roundDmg = (attacker.roundDmg || 0) + dealt;
       target.dmgTaken.set(attacker.id, (target.dmgTaken.get(attacker.id) || 0) + dealt);
+      logDamage(attacker.dmgLog?.given, target.id, dealt);
+      logDamage(target.dmgLog?.taken, attacker.id, dealt);
+    }
+    // tagging: getting hit slows you down briefly
+    if (dealt > 0 && !opts.noTag) {
+      target.tagAmt = Math.min(1, dealt / 60 + 0.3);
+      target.tagUntil = now + TAG_MS;
     }
     const from = opts.from || (attacker ? [attacker.x, attacker.y + 1.5, attacker.z] : [target.x, target.y, target.z]);
     this.game.send(target, { t: 'dmg', from: from.map(r2), amt: Math.round(dealt), hp: Math.max(0, Math.round(target.hp)), armor: Math.round(target.armor) });
@@ -932,6 +960,7 @@ export class Match {
     target.hp = 0;
     target.plantEnd = 0;
     target.defuseEnd = 0;
+    target.reinforceEnd = 0;
     target.using = false;
     target.reloadUntil = 0;
     target.stats.d++;
@@ -962,6 +991,7 @@ export class Match {
       target.stats.score -= 1;
     }
     this.dropAll(target);
+    this.sendDamageReport(target);
     this.game.broadcast({
       t: 'kill', k: attacker ? attacker.id : null, v: target.id, w: weaponId, hs: !!opts.hs, wb: !!opts.wallbang,
       a: assister ? assister.id : null, p: [r2(target.x), r2(target.y), r2(target.z)],
@@ -1001,8 +1031,17 @@ export class Match {
     }
   }
 
-  damageWall(box, amount) {
+  sendDamageReport(p) {
+    if (!p.conn || !p.dmgLog) return;
+    const pack = (m) => [...m.entries()].map(([id, v]) => [id, Math.round(v.d), v.h]);
+    const given = pack(p.dmgLog.given), taken = pack(p.dmgLog.taken);
+    if (!given.length && !taken.length) return;
+    this.game.send(p, { t: 'report', given, taken });
+  }
+
+  damageWall(box, amount, breach = false) {
     if (!box.active || !box.destructible) return;
+    if (box.reinforced && !breach) return;
     box.hp -= amount;
     if (box.hp <= 0) {
       box.hp = 0;
@@ -1124,7 +1163,53 @@ export class Match {
     return null;
   }
 
+  // Defenders hold USE while looking at a breakable panel to plate it with steel.
+  reinforceTarget(p) {
+    const eye = eyePosition(p);
+    const d = viewDir(p.yaw, p.pitch);
+    const h = this.world.raycast(eye[0], eye[1], eye[2], d[0], d[1], d[2], REINFORCE_RANGE);
+    if (!h || !h.box.destructible || !h.box.active || h.box.reinforced) return null;
+    return h.box;
+  }
+
+  updateReinforce(p, now) {
+    const allowed = this.mode === 'defuse' && p.team === TEAM.DEF && (this.phase === 'freeze' || this.phase === 'live') && p.reinforceLeft > 0;
+    if (p.reinforceEnd) {
+      const box = this.world.byId.get(p.reinforceBox);
+      const tgt = p.using && allowed ? this.reinforceTarget(p) : null;
+      if (!tgt || tgt !== box) {
+        p.reinforceEnd = 0;
+        p.reinforceBox = null;
+        this.game.send(p, { t: 'reinforce', ev: 'cancel' });
+      } else if (now >= p.reinforceEnd) {
+        p.reinforceEnd = 0;
+        p.reinforceBox = null;
+        p.reinforceLeft--;
+        for (const id of this.map.destructibles) {
+          const b = this.world.byId.get(id);
+          if (b.group !== box.group || !b.active) continue;
+          b.reinforced = true;
+          b.hp = 100;
+          this.wallUpdates.set(b.id, b.hp);
+        }
+        this.game.send(p, { t: 'reinforce', ev: 'done', left: p.reinforceLeft });
+        const c = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2];
+        this.game.broadcast({ t: 'snd', s: 'reinforced', p: c.map(r2) });
+      }
+      return;
+    }
+    if (!p.using || !allowed || p.plantEnd || p.defuseEnd || !p.onGround) return;
+    const box = this.reinforceTarget(p);
+    if (!box) return;
+    p.reinforceEnd = now + REINFORCE_TIME;
+    p.reinforceBox = box.id;
+    this.game.send(p, { t: 'reinforce', ev: 'start', endsAt: p.reinforceEnd, left: p.reinforceLeft });
+    const c = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2];
+    this.game.broadcast({ t: 'snd', s: 'reinforcing', id: p.id, p: c.map(r2) });
+  }
+
   updateUse(p, now) {
+    this.updateReinforce(p, now);
     if (this.mode !== 'defuse' || !this.bomb) return;
     const b = this.bomb;
     // planting
@@ -1253,6 +1338,7 @@ export class Match {
   }
 
   stepGrenade(g, h) {
+    if (g.stuck) return;
     g.vy -= 15 * h;
     const box = (x, y, z) => this.world.overlaps(x - GRENADE_R, y - GRENADE_R, z - GRENADE_R, x + GRENADE_R, y + GRENADE_R, z + GRENADE_R);
     g.resting = false;
@@ -1265,6 +1351,17 @@ export class Match {
       g[a] += dv;
       if (box(g.x, g.y, g.z)) {
         g[a] = old;
+        if (WEAPONS[g.type].sticky) {
+          // breach charge: stick to whatever we hit and arm the fuse
+          g.stuck = true;
+          g.vx = g.vy = g.vz = 0;
+          const n = [0, 0, 0];
+          n[a === 'x' ? 0 : a === 'y' ? 1 : 2] = dv > 0 ? -1 : 1;
+          g.normal = n;
+          g.explodeAt = this.now + WEAPONS[g.type].fuse * 1000;
+          this.game.broadcast({ t: 'snd', s: 'stick', p: [r2(g.x), r2(g.y), r2(g.z)], id: g.id, until: g.explodeAt, n });
+          return;
+        }
         const impact = Math.abs(g[va]);
         if (a === 'y') {
           if (g.vy < 0) g.resting = true;
@@ -1299,7 +1396,7 @@ export class Match {
         const hits = this.world.raycastAll(g.x, g.y, g.z, (cx - g.x) / d, (cy - g.y) / d, (cz - g.z) / d, d);
         let blocked = false;
         for (const hh of hits) {
-          if (hh.box.destructible) mul *= 0.5;
+          if (hh.box.destructible && !hh.box.reinforced) mul *= 0.5;
           else { blocked = true; break; }
         }
         if (blocked) continue;
@@ -1318,6 +1415,37 @@ export class Match {
         const bx = (b.min[0] + b.max[0]) / 2, by = (b.min[1] + b.max[1]) / 2, bz = (b.min[2] + b.max[2]) / 2;
         const d = Math.hypot(bx - g.x, by - g.y, bz - g.z);
         if (d < 3.8) this.damageWall(b, 420 * (1 - d / 3.8) + 20);
+      }
+    } else if (g.type === 'breach') {
+      const w = WEAPONS.breach;
+      const n = g.normal || [0, 1, 0];
+      this.game.broadcast({ t: 'nade', type: 'breach', p, n });
+      // blow open every panel close to the charge, reinforced or not
+      for (const id of this.map.destructibles) {
+        const b = this.world.byId.get(id);
+        if (!b.active) continue;
+        const dx = Math.max(b.min[0] - g.x, 0, g.x - b.max[0]);
+        const dy = Math.max(b.min[1] - g.y, 0, g.y - b.max[1]);
+        const dz = Math.max(b.min[2] - g.z, 0, g.z - b.max[2]);
+        if (Math.hypot(dx, dy, dz) < w.breakRadius) this.damageWall(b, 1e6, true);
+      }
+      // blast both sides (panels just broken no longer block)
+      for (const q of this.players.values()) {
+        if (!q.alive || !this.inMatch(q)) continue;
+        const cx = q.x, cy = q.y + heightFor(q.crouch) * 0.6, cz = q.z;
+        const d = Math.hypot(cx - g.x, cy - g.y, cz - g.z);
+        if (d > w.radius) continue;
+        const ox = g.x + n[0] * 0.15, oy = g.y + n[1] * 0.15, oz = g.z + n[2] * 0.15;
+        const behind = (cx - g.x) * n[0] + (cy - g.y) * n[1] + (cz - g.z) * n[2] < 0;
+        if (!behind && !this.world.lineOfSight(ox, oy, oz, cx, cy, cz)) continue;
+        if (behind && !this.world.lineOfSight(g.x - n[0] * 0.3, g.y - n[1] * 0.3, g.z - n[2] * 0.3, cx, cy, cz)) continue;
+        const friendly = thrower && !this.enemies(thrower, q) && q !== thrower;
+        if (friendly && !this.settings.friendlyFire) continue;
+        let dmg = w.damage * Math.pow(1 - d / w.radius, 1.2);
+        if (friendly) dmg *= 0.35;
+        if (dmg < 1) continue;
+        const armored = q.armor > 0;
+        this.applyDamage(q, armored ? dmg * 0.65 : dmg, armored ? dmg * 0.35 : 0, thrower, 'breach', { from: [g.x, g.y, g.z] });
       }
     } else if (g.type === 'flash') {
       this.game.broadcast({ t: 'nade', type: 'flash', p });
@@ -1379,8 +1507,16 @@ function segmentSphere(a, b, c, r) {
   return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
 }
 
+function logDamage(map, id, dmg) {
+  if (!map) return;
+  const e = map.get(id) || { d: 0, h: 0 };
+  e.d += dmg;
+  e.h++;
+  map.set(id, e);
+}
+
 export function emptyInventory() {
-  return { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0 }, bomb: false };
+  return { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0, breach: 0 }, bomb: false };
 }
 
 export function makeWeapon(id) {

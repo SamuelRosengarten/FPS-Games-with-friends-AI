@@ -168,7 +168,7 @@ export class Game {
       id: this.nextId++, name, bot, conn, team: TEAM.NONE, ping: 0,
       alive: false, hp: 0, armor: 0, helmet: false, kit: false, money: 0,
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0, pitch: 0, crouch: 0, lean: 0, onGround: true,
-      inv: { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0 }, bomb: false },
+      inv: { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0, breach: 0 }, bomb: false },
       cur: 'knife', stats: { k: 0, d: 0, a: 0, hs: 0, dmg: 0, score: 0, mvp: 0 }, hist: [],
       tpId: 0, dmgTaken: new Map(),
     };

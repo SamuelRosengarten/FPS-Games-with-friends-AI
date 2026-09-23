@@ -36,6 +36,13 @@ export const PLAYER = Object.freeze({
   maxArmor: 100,
 });
 
+// Tagging: taking damage slows you for a moment. Returns the fraction of speed lost.
+export const TAG_MS = 450;
+export function tagSlow(amt, left) {
+  const k = Math.min(1, Math.max(0, left));
+  return Math.min(1, Math.max(0, amt)) * 0.55 * k * k;
+}
+
 // Snapshot flag bits.
 export const FLAG = Object.freeze({
   ALIVE: 1,
@@ -50,6 +57,7 @@ export const FLAG = Object.freeze({
   HELMET: 512,
   BLIND: 1024,
   PROTECT: 2048,
+  REINFORCE: 4096,
 });
 
 export const MODES = {

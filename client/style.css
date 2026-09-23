@@ -336,6 +336,14 @@ table.sb .icons { font-size: 11px; color: var(--dim); margin-left: 6px; }
 #spectate-info small { display: block; color: var(--dim); font-size: 12px; font-weight: 600; margin-top: 2px; }
 #death-info { position: absolute; top: 18%; left: 50%; transform: translateX(-50%); background: rgba(40,8,8,0.72); border: 1px solid rgba(255,70,70,0.5); padding: 10px 20px; border-radius: 10px; text-align: center; font-size: 16px; }
 #death-info small { display: block; color: #e6b8b8; font-size: 12px; margin-top: 3px; }
+#dmg-report { position: absolute; left: 18px; bottom: 120px; min-width: 230px; background: rgba(10,14,20,0.72); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 8px 12px; font-size: 13px; transition: opacity .5s; }
+#dmg-report.fade { opacity: 0; }
+#dmg-report .dr-title { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #9aa6b2; margin: 4px 0 2px; }
+#dmg-report .dr-row { display: grid; grid-template-columns: 1fr auto 56px; gap: 10px; align-items: baseline; padding: 1px 0; }
+#dmg-report .dr-row b { font-family: var(--mono); }
+#dmg-report .dr-row.given b { color: #7fe38a; }
+#dmg-report .dr-row.taken b { color: #ff7a6b; }
+#dmg-report .dr-row i { font-style: normal; color: #8b96a1; font-size: 11px; text-align: right; }
 #gg-info { position: absolute; bottom: 110px; right: 18px; background: rgba(10,14,20,0.6); padding: 6px 12px; border-radius: 8px; font-size: 13px; }
 #fps { position: absolute; right: 10px; top: 110px; font-family: var(--mono); font-size: 12px; color: #9fe; }
 #net-warn { position: absolute; top: 110px; left: 50%; transform: translateX(-50%); background: rgba(160, 60, 0, 0.8); padding: 6px 14px; border-radius: 8px; }

@@ -1,7 +1,7 @@
 // Bot AI. Produces the same movement input a human client would, and fires through the match.
 
 import { TEAM, DEG, clamp, viewDir, wrapAngle } from '../shared/constants.js';
-import { WEAPONS, computeSpread, applySpread, recoilOffset } from '../shared/weapons.js';
+import { WEAPONS, GRENADES, computeSpread, applySpread, recoilOffset } from '../shared/weapons.js';
 import { eyePosition, heightFor } from '../shared/physics.js';
 import { inZone } from '../shared/maps/builder.js';
 
@@ -57,6 +57,11 @@ export class BotBrain {
     this.crouchUntil = 0;
     this.aimZone = 'chest';
     this.jumpQueued = false;
+    this.faceAt = null;
+    this.avertUntil = 0;
+    this.reinforceJob = null;
+    this.breachDone = false;
+    this.smokeDone = false;
   }
 
   onSpawn() { this.reset(); }
@@ -106,7 +111,9 @@ export class BotBrain {
     if (pistolRound && money() >= 700 && Math.random() < 0.35) m.onBuy(p, 'deagle');
     if (p.team === TEAM.DEF && money() >= 400 && Math.random() < 0.6) m.onBuy(p, 'kit');
     if (money() >= 300 && Math.random() < 0.5) m.onBuy(p, 'frag');
-    if (money() >= 300 && Math.random() < 0.25) m.onBuy(p, 'smoke');
+    if (money() >= 300 && Math.random() < 0.35) m.onBuy(p, 'smoke');
+    if (money() >= 200 && Math.random() < 0.4) m.onBuy(p, 'flash');
+    if (p.team === TEAM.ATT && m.mode === 'defuse' && money() >= 400 && Math.random() < 0.3) m.onBuy(p, 'breach');
     if (p.inv.primary) m.onSwitch(p, 'primary');
     else if (p.inv.secondary) m.onSwitch(p, 'secondary');
   }
@@ -210,6 +217,7 @@ export class BotBrain {
       this.idleLook(now, dt, moveYaw);
       if (p.blindUntil > now) { inp.fwd = -0.5; p.yaw += Math.sin(now / 150) * dt * 2; }
       this.maybeThrowNade(now);
+      this.maybeUtility(now);
     }
     if (now < this.crouchUntil) inp.crouch = true;
     if (moveYaw != null && !this.target) {
@@ -227,7 +235,7 @@ export class BotBrain {
   manageWeapon(now) {
     const p = this.p, m = this.m;
     if (p.cur === 'bomb') m.onSwitch(p, p.inv.primary ? 'primary' : p.inv.secondary ? 'secondary' : 'knife');
-    if (['frag', 'flash', 'smoke'].includes(p.cur) && !this.throwing) m.onSwitch(p, p.inv.primary ? 'primary' : p.inv.secondary ? 'secondary' : 'knife');
+    if (GRENADES.includes(p.cur) && !this.throwing) m.onSwitch(p, p.inv.primary ? 'primary' : p.inv.secondary ? 'secondary' : 'knife');
     const it = m.currentItem(p);
     if (p.cur === 'knife' && (p.inv.primary || p.inv.secondary) && m.mode !== 'gungame') {
       const alt = p.inv.primary?.mag + p.inv.primary?.reserve > 0 ? 'primary' : p.inv.secondary ? 'secondary' : null;
@@ -251,6 +259,7 @@ export class BotBrain {
   chooseGoal(now) {
     const m = this.m, p = this.p;
     this.use = false;
+    this.faceAt = null;
     if (m.mode === 'defuse') {
       if (m.phase === 'freeze' || m.phase === 'post' || m.phase === 'ended' || m.phase === 'halftime') return null;
       const bomb = m.bomb;
@@ -290,6 +299,8 @@ export class BotBrain {
         }
         let site = this.p.id % 2 === 0 ? 'A' : 'B';
         if (m.botPlan.alertSite && now - m.botPlan.alertAt < 25000) site = m.botPlan.alertSite;
+        const job = this.reinforceGoal(now, site);
+        if (job !== undefined) return job;
         return this.setGoal('hold' + site, this.spotIn(m.map.zones[site], 'hold' + site));
       }
     }
@@ -384,7 +395,18 @@ export class BotBrain {
   idleLook(now, dt, moveYaw) {
     const p = this.p;
     let targetYaw = null, targetPitch = 0;
-    if (this.lookAt && now - this.lookAt.t < 1500) {
+    if (this.faceAt) {
+      // working on something (reinforcing): look straight at it
+      const eyeY = p.y + 1.6;
+      const dx = this.faceAt.x - p.x, dz = this.faceAt.z - p.z;
+      p.yaw = Math.atan2(-dx, -dz);
+      p.pitch = Math.atan2(this.faceAt.y - eyeY, Math.hypot(dx, dz) || 0.01);
+      return;
+    }
+    if (now < this.avertUntil) {
+      // look away from our own flashbang
+      targetYaw = this.avertYaw;
+    } else if (this.lookAt && now - this.lookAt.t < 1500) {
       targetYaw = Math.atan2(-(this.lookAt.x - p.x), -(this.lookAt.z - p.z));
     } else if (this.heard && now - this.heard.t < 2500) {
       targetYaw = Math.atan2(-(this.heard.x - p.x), -(this.heard.z - p.z));
@@ -518,26 +540,147 @@ export class BotBrain {
     }
   }
 
+  // ---------------------------------------------------------------- utility
+  // Defenders spend the first part of the round plating walls near their site.
+  // Returns a goal, null (working in place) or undefined (nothing to do).
+  reinforceGoal(now, site) {
+    const m = this.m, p = this.p;
+    if (m.phase !== 'live' || !(p.reinforceLeft > 0) || now - (m.liveAt || 0) > 30000 || this.visible.length || this.target) return undefined;
+    let job = this.reinforceJob;
+    if (job) {
+      const b = m.world.byId.get(job.id);
+      if (!b.active || b.reinforced) { m.botPlan.claimed.delete(job.group); job = this.reinforceJob = null; }
+    }
+    if (!job) {
+      if (this.noJobUntil > now) return undefined;
+      job = this.reinforceJob = this.findReinforceJob(site);
+      if (!job) { this.noJobUntil = now + 5000; return undefined; }
+      m.botPlan.claimed.add(job.group);
+    }
+    if (Math.hypot(job.spot.x - p.x, job.spot.z - p.z) < 0.55 && p.onGround) {
+      this.faceAt = job.face;
+      this.use = true;
+      return null;
+    }
+    return this.setGoal('reinforce' + job.id, job.spot);
+  }
+
+  findReinforceJob(site) {
+    const m = this.m, p = this.p;
+    const zone = m.map.zones[site];
+    if (!zone) return null;
+    const zc = [(zone.min[0] + zone.max[0]) / 2, (zone.min[2] + zone.max[2]) / 2];
+    let best = null, bestD = Infinity;
+    for (const id of m.map.destructibles) {
+      const b = m.world.byId.get(id);
+      // face the middle row of each section so the look ray lands on it
+      if (!b.active || b.reinforced || b.min[1] < 0.9 || b.min[1] > 1.1 || m.botPlan.claimed.has(b.group)) continue;
+      const c = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+      if (Math.hypot(c[0] - zc[0], c[2] - zc[1]) > 16) continue;
+      const thinX = b.max[0] - b.min[0] < b.max[2] - b.min[2];
+      for (const s of [1, -1]) {
+        const x = c[0] + (thinX ? s * 1.05 : 0), z = c[2] + (thinX ? 0 : s * 1.05);
+        const n = m.nav.nearest(x, 0.2, z);
+        if (!n || Math.hypot(n.x - x, n.z - z) > 0.55 || n.y > 0.3) continue;
+        const d = Math.hypot(n.x - p.x, n.z - p.z);
+        if (d < bestD) { bestD = d; best = { id, group: b.group, spot: { x: n.x, y: n.y, z: n.z }, face: { x: c[0], y: 1.45, z: c[2] } }; }
+      }
+    }
+    return best;
+  }
+
+  throwAt(type, target, speed, arc = 0.08) {
+    const m = this.m, p = this.p;
+    const d = Math.hypot(target.x - p.x, target.z - p.z);
+    const g = 15;
+    const s = clamp((g * d) / (speed * speed), 0, 1);
+    const ang = 0.5 * Math.asin(s) + arc;
+    const yaw = Math.atan2(-(target.x - p.x), -(target.z - p.z));
+    const prev = p.cur;
+    p.cur = type;
+    p.deployUntil = 0;
+    this.throwing = true;
+    m.onThrow(p, { o: eyePosition(p), v: viewDir(yaw, ang).map((x) => x * speed) });
+    this.throwing = false;
+    if (p.cur === type) p.cur = prev;
+    return yaw;
+  }
+
   maybeThrowNade(now) {
     const m = this.m, p = this.p;
-    if (now < this.nadeCooldown || !p.inv.nades.frag || !this.lastKnown || m.phase === 'freeze') return;
+    if (now < this.nadeCooldown || !this.lastKnown || m.phase === 'freeze') return;
+    const hasFrag = p.inv.nades.frag > 0, hasFlash = p.inv.nades.flash > 0;
+    if (!hasFrag && !hasFlash) return;
     const age = now - this.lastKnown.t;
     if (age < 600 || age > 4000) return;
     const d = Math.hypot(this.lastKnown.x - p.x, this.lastKnown.z - p.z);
-    if (d < 7 || d > 24) return;
+    if (d < 6 || d > 24) return;
     this.nadeCooldown = now + 8000;
     if (Math.random() > this.d.nade) return;
-    const prev = p.cur;
-    p.cur = 'frag';
-    p.deployUntil = 0;
-    const g = 15, v = 15;
-    const s = clamp((g * d) / (v * v), 0, 1);
-    const ang = 0.5 * Math.asin(s) + 0.08;
-    const yaw = Math.atan2(-(this.lastKnown.x - p.x), -(this.lastKnown.z - p.z));
-    const dir = viewDir(yaw, ang);
-    this.throwing = true;
-    m.onThrow(p, { o: eyePosition(p), v: dir.map((x) => x * v) });
-    this.throwing = false;
-    if (p.cur === 'frag') p.cur = prev;
+    if (hasFlash && (!hasFrag || Math.random() < 0.45) && d < 20) {
+      // pop flash over the corner, then turn away until it goes off
+      const yaw = this.throwAt('flash', this.lastKnown, 13, 0.25);
+      this.avertYaw = yaw + Math.PI;
+      this.avertUntil = now + 1700;
+      return;
+    }
+    if (hasFrag) this.throwAt('frag', this.lastKnown, 15);
+  }
+
+  maybeUtility(now) {
+    const m = this.m, p = this.p;
+    if (m.mode !== 'defuse' || m.phase !== 'live' || p.team !== TEAM.ATT) return;
+    const zone = m.map.zones[m.botPlan.site];
+    if (!zone) return;
+    const zc = { x: (zone.min[0] + zone.max[0]) / 2, z: (zone.min[2] + zone.max[2]) / 2 };
+    const toSite = Math.hypot(zc.x - p.x, zc.z - p.z);
+    // smoke off the defenders' approach when we arrive at the site
+    if (!this.smokeDone && p.inv.nades.smoke > 0 && toSite < 16 && !m.botPlan.smoked.has(m.botPlan.site)) {
+      this.smokeDone = true;
+      const ds = m.map.spawns[TEAM.DEF][0];
+      if (ds) {
+        const path = m.nav.findPath(m.world, { x: zc.x, y: 0.2, z: zc.z }, { x: ds[0], y: ds[1] + 0.1, z: ds[2] }, 6000);
+        if (path && path.length > 3) {
+          let acc = 0, pt = path[path.length - 1];
+          for (let i = 1; i < path.length; i++) {
+            acc += Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z);
+            if (acc > 9) { pt = path[i]; break; }
+          }
+          const d = Math.hypot(pt.x - p.x, pt.z - p.z);
+          const eye = eyePosition(p);
+          if (d > 5 && d < 26 && m.world.lineOfSight(eye[0], eye[1], eye[2], pt.x, pt.y + 1.5, pt.z)) {
+            m.botPlan.smoked.add(m.botPlan.site);
+            this.throwAt('smoke', pt, 14);
+          }
+        }
+      }
+    }
+    // breach charge on a wall next to the site
+    if (!this.breachDone && p.inv.nades.breach > 0 && toSite < 18) {
+      const eye = eyePosition(p);
+      for (const id of m.map.destructibles) {
+        const b = m.world.byId.get(id);
+        if (!b.active || b.min[1] < 0.9 || b.min[1] > 1.1) continue;
+        const c = { x: (b.min[0] + b.max[0]) / 2, y: (b.min[1] + b.max[1]) / 2, z: (b.min[2] + b.max[2]) / 2 };
+        const d = Math.hypot(c.x - p.x, c.z - p.z);
+        if (d < 3 || d > 6 || Math.hypot(c.x - zc.x, c.z - zc.z) > 14) continue;
+        const h = m.world.raycast(eye[0], eye[1], eye[2], (c.x - eye[0]) / d, (c.y - eye[1]) / d, (c.z - eye[2]) / d, d + 0.5);
+        if (!h || h.box !== b) continue;
+        this.breachDone = true;
+        const yaw = Math.atan2(-(c.x - p.x), -(c.z - p.z));
+        const pitch = Math.atan2(c.y - eye[1], d);
+        const prev = p.cur;
+        p.cur = 'breach';
+        p.deployUntil = 0;
+        this.throwing = true;
+        m.onThrow(p, { o: eye, v: viewDir(yaw, pitch + 0.05).map((x) => x * 11) });
+        this.throwing = false;
+        if (p.cur === 'breach') p.cur = prev;
+        // step back from the blast
+        this.lookAt = null;
+        this.path = null;
+        break;
+      }
+    }
   }
 }

@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import {
   TEAM, TEAM_NAMES, PLAYER, FLAG, INTERP_DELAY, USE_RANGE, MODES, DEG,
-  clamp, lerp, angleLerp, wrapAngle, viewDir, isEnemy,
+  clamp, lerp, angleLerp, wrapAngle, viewDir, isEnemy, TAG_MS, tagSlow,
 } from '../shared/constants.js';
 import { WEAPONS, GRENADES, computeSpread, applySpread, recoilDelta, GUNGAME_ORDER } from '../shared/weapons.js';
 import { loadMap } from '../shared/maps/index.js';
@@ -12,13 +12,15 @@ import { PhysicsWorld, stepPlayer, eyePosition, leanClearance, rayHitPlayer, hei
 import { materialInfo } from '../shared/materials.js';
 import { TextureLibrary } from './textures.js';
 import { WorldView } from './world.js';
+import { Decor } from './decor.js';
 import { Effects } from './effects.js';
 import { ViewModel } from './viewmodel.js';
-import { PlayerModel, teamLook, weaponTemplate } from './models.js';
+import { PlayerModel, teamLook, weaponTemplate, bakedWeapon } from './models.js';
 import { Radar, esc } from './hud.js';
 
 const SURFACE_IDX = { stone: 0, wood: 1, metal: 2, sand: 3 };
 const tmpV = new THREE.Vector3();
+const tmpV2 = new THREE.Vector3();
 
 function fmtTime(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -34,6 +36,7 @@ export class ClientGame {
     this.lobbyPlayers = new Map();
     this.players = new Map();
     this.grenades = new Map();
+    this.stuck = new Map();
     this.drops = new Map();
     this.sb = null;
   }
@@ -52,14 +55,26 @@ export class ClientGame {
       this.tex = new TextureLibrary(this.g.renderer, this.g.quality);
       this.tex.quality = this.g.quality;
     }
-    const mats = [...new Set(this.map.boxes.map((b) => b.mat)), 'woodPanel', 'lamp'];
+    const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', 'metal', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
     const t0 = performance.now();
     await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}… ${Math.round(f * 100)}%`; });
     const t1 = performance.now();
     this.g.setupEnvironment(this.map);
+    const tEnv = performance.now();
     this.worldView = new WorldView(this.g, this.tex, this.map);
-    console.info(`[breachpoint] textures ${Math.round(t1 - t0)} ms, world ${Math.round(performance.now() - t1)} ms (${mats.length} materials, ${this.g.quality})`);
+    const t2 = performance.now();
+    this.decor = new Decor(this.g, this.tex, this.map);
+    console.info(`[breachpoint] textures ${Math.round(t1 - t0)} ms, env ${Math.round(tEnv - t1)} ms, world ${Math.round(t2 - tEnv)} ms, decor ${Math.round(performance.now() - t2)} ms (${mats.length} materials, ${this.g.quality}) ${JSON.stringify(this.decor.timings)}`);
     this.effects = new Effects(this.g);
+    this.effects.setWorld(this.world);
+    this.effects.setAmbient(this.map.theme.motes);
+    this.effects.onCasingBounce = (p, big) => this.audio.casing(p, big);
+    this.audio.occlusion = (pos) => {
+      const l = this.audio.listener;
+      const a = this.world.lineOfSight(l.x, l.y, l.z, pos[0], pos[1], pos[2]);
+      const b = this.world.lineOfSight(l.x, l.y, l.z, pos[0], pos[1] + 0.9, pos[2]);
+      return a && b ? 0 : a || b ? 0.5 : 1;
+    };
     this.viewmodel = this.viewmodel || new ViewModel(this.g);
     this.viewmodel.setVisible(true);
     this.radar = new Radar(document.getElementById('radar'), this.map);
@@ -76,15 +91,19 @@ export class ClientGame {
     this.buyEnds = 0;
     this.bomb = st.bomb;
     this.bombModel = null;
+    // created up-front: adding a light mid-round would force every lit shader to recompile (a hitch)
+    if (!this.bombLight) this.bombLight = new THREE.PointLight(0xff2020, 0, 3, 2);
+    this.bombLight.intensity = 0;
+    this.g.scene.add(this.bombLight);
     this.nextBeep = 0;
     for (const [id, x, y, z, until, start] of st.smokes || []) this.effects.addSmoke(id, [x, y, z], start, until, this.net.serverNow(), this.smokeTint());
-    for (const [id, hp] of st.walls || []) this.applyWall(id, hp, false);
+    for (const [id, hp, r] of st.walls || []) this.applyWall(id, hp, false, !!r);
     for (const d of st.drops || []) this.addDrop(d);
 
     this.me = {
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, onGround: true, crouch: 0, lean: 0, yaw: 0, pitch: 0,
       alive: false, hp: 0, armor: 0, helmet: false, kit: false, money: 0, team: this.lobbyPlayers.get(myId)?.team ?? 0,
-      inv: { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0 }, bomb: false }, cur: 'knife', gg: 0, buyUntil: 0,
+      inv: { primary: null, secondary: null, nades: { frag: 0, flash: 0, smoke: 0, breach: 0 }, bomb: false }, cur: 'knife', gg: 0, buyUntil: 0,
     };
     this.tpId = 0;
     this.w = { nextFire: 0, reloadEnd: 0, deployEnd: 0, shots: 0, lastShot: 0, bloom: 0, punchYaw: 0, punchPitch: 0, ads: 0, adsHeld: false, scope: 0, pin: false, lob: false, lastSlot: 'secondary', dryClick: false, rezoomAt: 0 };
@@ -108,7 +127,7 @@ export class ClientGame {
     this.visibleEnemies = new Map();
     // own model (shadow only)
     this.ownModel = new PlayerModel(teamLook(this.me.team, myId, this.ffa));
-    this.ownModel.root.traverse((o) => o.layers.set(2));
+    this.ownModel.setLayer(2);
     this.g.scene.add(this.ownModel.root);
     this.active = true;
     this.audio.startAmbient(this.map.theme.ambientSound);
@@ -122,8 +141,11 @@ export class ClientGame {
   stop() {
     if (!this.active) return;
     this.active = false;
+    this.audio.occlusion = null;
     this.worldView?.dispose();
+    this.decor?.dispose();
     this.effects?.dispose();
+    this.g.setHurt(0);
     for (const p of this.players.values()) this.g.scene.remove(p.model.root);
     this.players.clear();
     for (const g of this.grenades.values()) this.g.scene.remove(g.mesh);
@@ -180,7 +202,7 @@ export class ClientGame {
   rebuildOwnModel() {
     if (this.ownModel) this.g.scene.remove(this.ownModel.root);
     this.ownModel = new PlayerModel(teamLook(this.me.team, this.myId, this.ffa));
-    this.ownModel.root.traverse((o) => o.layers.set(2));
+    this.ownModel.setLayer(2);
     this.g.scene.add(this.ownModel.root);
     this.viewmodel.setLook(teamLook(this.me.team || 1, this.myId, this.ffa));
   }
@@ -204,7 +226,9 @@ export class ClientGame {
       case 'hit': this.onHit(msg); break;
       case 'dmg': this.onDamage(msg); break;
       case 'kill': this.onKill(msg); break;
-      case 'walls': for (const [id, hp] of msg.d) this.applyWall(id, hp, true); break;
+      case 'walls': for (const [id, hp, r] of msg.d) this.applyWall(id, hp, true, !!r); break;
+      case 'report': this.onReport(msg); break;
+      case 'reinforce': this.onReinforce(msg); break;
       case 'nade': this.onNade(msg); break;
       case 'flashed': this.onFlashed(msg); break;
       case 'bomb': this.onBombEvent(msg); break;
@@ -227,7 +251,8 @@ export class ClientGame {
     this.grenades.clear();
     this.effects.reset();
     this.worldView.resetPanels();
-    for (const id of this.map.destructibles) { const b = this.world.byId.get(id); if (b) { b.active = true; b.hp = 100; } }
+    for (const id of this.map.destructibles) { const b = this.world.byId.get(id); if (b) { b.active = true; b.hp = 100; b.reinforced = false; } }
+    this.stuck.clear();
     for (const rp of this.players.values()) { rp.model.revive(); rp.deadAt = 0; }
   }
 
@@ -249,7 +274,7 @@ export class ClientGame {
       seen.add(id);
       let g = this.grenades.get(id);
       if (!g) {
-        const mesh = weaponTemplate(type);
+        const mesh = bakedWeapon(type);
         mesh.scale.setScalar(1.3);
         this.g.scene.add(mesh);
         g = { mesh, snaps: [], type };
@@ -272,6 +297,7 @@ export class ClientGame {
     const localMag = this.curItem()?.[1];
     me.hp = m.hp; me.armor = m.armor; me.helmet = m.helmet; me.kit = m.kit; me.money = m.money; me.gg = m.gg; me.buyUntil = m.buyUntil;
     me.team = m.team;
+    me.reinforceLeft = m.rf || 0;
     me.inv = m.inv;
     me.alive = m.alive;
     if (m.cur !== me.cur || !wasAlive) me.cur = m.cur;
@@ -312,8 +338,54 @@ export class ClientGame {
   onHit(m) {
     this.hud.hitmarker(m.hs, m.kill);
     this.audio.hitmarker(m.hs, m.kill, m.armor);
-    if (m.p) this.effects.blood(m.p, [0, 0, 0]);
+    if (m.p) {
+      this.effects.blood(m.p, [0, 0, 0]);
+      const eye = eyePosition(this.me);
+      this.bloodSplatter(m.p, [m.p[0] - eye[0], m.p[1] - eye[1], m.p[2] - eye[2]]);
+    }
     if (m.kill) this.input.rumble(0.3, 0.6, 120);
+  }
+
+  onReport(m) {
+    const row = (id, dmg, hits, cls) => `<div class="dr-row ${cls}"><span>${esc(this.nameOf(id))}</span><b>${dmg}</b><i>${hits} hit${hits === 1 ? '' : 's'}</i></div>`;
+    let html = '';
+    if (m.given.length) html += `<div class="dr-title">Damage given</div>${m.given.map(([id, d, h]) => row(id, d, h, 'given')).join('')}`;
+    if (m.taken.length) html += `<div class="dr-title">Damage taken</div>${m.taken.map(([id, d, h]) => row(id, d, h, 'taken')).join('')}`;
+    this.hud.report(html, 7);
+  }
+
+  onReinforce(m) {
+    if (m.left != null) this.me.reinforceLeft = m.left;
+    if (m.ev === 'start') this.progress = { label: 'REINFORCING WALL', start: this.net.serverNow(), end: m.endsAt, kind: 'defuse' };
+    else {
+      this.progress = null;
+      if (m.ev === 'done') this.hud.center('WALL REINFORCED', `${m.left} reinforcement${m.left === 1 ? '' : 's'} left`, 'good', 1.4);
+    }
+  }
+
+  // Panel the local player is looking at that can be reinforced (defenders, Defuse only).
+  reinforceTarget() {
+    const me = this.me;
+    if (this.mode !== 'defuse' || me.team !== TEAM.DEF || !(me.reinforceLeft > 0)) return null;
+    if (this.phase !== 'freeze' && this.phase !== 'live') return null;
+    const eye = eyePosition(me);
+    const d = viewDir(me.yaw, me.pitch);
+    const h = this.world.raycast(eye[0], eye[1], eye[2], d[0], d[1], d[2], 2.3);
+    if (!h || !h.box.destructible || !h.box.active || h.box.reinforced) return null;
+    return h.box;
+  }
+
+  // Blood on the wall (or floor) behind a hit, along the bullet's direction.
+  bloodSplatter(p, dir) {
+    const L = Math.hypot(dir[0], dir[1], dir[2]);
+    if (L < 1e-3) return;
+    const dx = dir[0] / L, dy = dir[1] / L - 0.25, dz = dir[2] / L;
+    const n = Math.hypot(dx, dy, dz);
+    const h = this.world.raycast(p[0], p[1], p[2], dx / n, dy / n, dz / n, 2.6);
+    if (h) {
+      const t = h.t;
+      this.effects.bloodDecal([p[0] + dx / n * t, p[1] + dy / n * t, p[2] + dz / n * t], h.n, 0.35 + (2.6 - t) * 0.12);
+    }
   }
 
   onDamage(m) {
@@ -327,6 +399,8 @@ export class ClientGame {
     this.audio.hurt();
     this.w.punchPitch += Math.min(0.05, m.amt * 0.0012);
     this.shake = Math.min(1, this.shake + m.amt / 60);
+    this.hurtFlash = Math.min(1, (this.hurtFlash || 0) + 0.25 + m.amt / 60);
+    if (m.amt > 0) { this.tagAmt = Math.min(1, m.amt / 60 + 0.3); this.tagUntil = performance.now() + TAG_MS; }
     this.input.rumble(0.8, 0.4, 150);
   }
 
@@ -348,7 +422,15 @@ export class ClientGame {
     if (rp) {
       rp.alive = false;
       rp.deadAt = performance.now();
-      rp.model.die(Math.random() < 0.5 ? 1 : -1);
+      // knock the body away from the killer
+      const kp = m.k === this.myId ? this.me : this.players.get(m.k)?.state;
+      const vp = rp.state;
+      if (kp && vp && m.k !== m.v && Math.hypot(vp.x - kp.x, vp.z - kp.z) > 0.1) rp.model.die(vp.x - kp.x, vp.z - kp.z);
+      else rp.model.die(Math.random() < 0.5 ? 1 : -1);
+      if (vp && m.w !== 'suicide' && m.w !== 'fall') {
+        const fy = this.world.groundBelow(vp.x, vp.y + 0.3, vp.z, 2);
+        setTimeout(() => this.active && this.effects.bloodDecal([vp.x, fy, vp.z], [0, 1, 0], 0.9), 450);
+      }
     }
     if (m.v === this.myId) {
       this.me.alive = false;
@@ -372,10 +454,15 @@ export class ClientGame {
     }
   }
 
-  applyWall(id, hp, fx) {
+  applyWall(id, hp, fx, reinforced = false) {
     const b = this.world.byId.get(id);
     if (!b) return;
     b.hp = hp;
+    if (!!b.reinforced !== reinforced && hp > 0) {
+      b.reinforced = reinforced;
+      this.worldView.setPanelReinforced(id, reinforced);
+    }
+    if (hp <= 0) b.reinforced = false;
     if (hp <= 0 && b.active) {
       b.active = false;
       const broke = this.worldView.setPanelHp(id, 0);
@@ -397,6 +484,20 @@ export class ClientGame {
       this.audio.explosion(p);
       this.shake = Math.min(1.5, this.shake + Math.max(0, 1.4 - d / 14));
       if (d < 12) this.input.rumble(1, 0.8, 350);
+    } else if (m.type === 'breach') {
+      this.effects.explosion(p, false);
+      const n = m.n || [0, 1, 0];
+      // splinters blown out through the wall
+      const floor = this.world.groundBelow(p[0], p[1], p[2], 4);
+      for (let i = 0; i < 10; i++) {
+        const s = 0.05 + Math.random() * 0.14;
+        this.effects.chunk(p, [-n[0] * (4 + Math.random() * 5) + (Math.random() - 0.5) * 4, 1 + Math.random() * 3, -n[2] * (4 + Math.random() * 5) + (Math.random() - 0.5) * 4],
+          [s, s * 0.3, s * (0.5 + Math.random())], floor, 0x8a6238);
+      }
+      this.audio.explosion(p);
+      this.shake = Math.min(1.5, this.shake + Math.max(0, 1.1 - d / 12));
+      if (d < 10) this.input.rumble(0.9, 0.7, 300);
+      for (const [id, st] of this.stuck) if (Math.hypot(st.p[0] - p[0], st.p[1] - p[1], st.p[2] - p[2]) < 0.6) this.stuck.delete(id);
     } else if (m.type === 'flash') {
       this.effects.flashbang(p);
       this.audio.flashPop(p);
@@ -493,6 +594,12 @@ export class ClientGame {
       case 'bounce': this.audio.bounce(m.p); break;
       case 'pickup': this.audio.pickup(); break;
       case 'throw': if (m.id !== this.myId) this.audio.throwWhoosh(pos); break;
+      case 'stick':
+        this.audio.stick(m.p);
+        this.stuck.set(m.id, { p: m.p, n: m.n || [0, 1, 0], until: m.until, nextBeep: 0 });
+        break;
+      case 'reinforcing': this.audio.reinforcing(m.p); break;
+      case 'reinforced': this.audio.reinforced(m.p); break;
       default: break;
     }
   }
@@ -501,7 +608,7 @@ export class ClientGame {
   addDrop(d) {
     const [id, wid, x, y, z] = d;
     if (this.drops.has(id)) return;
-    const mesh = weaponTemplate(wid);
+    const mesh = bakedWeapon(wid);
     mesh.position.set(x, y + 0.035, z);
     mesh.rotation.set(0, Math.random() * Math.PI * 2, Math.PI / 2);
     if (WEAPONS[wid]?.slot === 'grenade') mesh.rotation.z = 0;
@@ -527,12 +634,10 @@ export class ClientGame {
     if (!this.bombModel) {
       this.bombModel = weaponTemplate('bomb');
       this.bombModel.scale.setScalar(1.6);
-      this.bombLight = new THREE.PointLight(0xff2020, 0, 3, 2);
-      this.bombLight.position.set(0, 0.2, 0);
-      this.bombModel.add(this.bombLight);
       this.g.scene.add(this.bombModel);
     }
     this.bombModel.position.set(b.p[0], b.p[1] + 0.065, b.p[2]);
+    this.bombLight.position.set(b.p[0], b.p[1] + 0.3, b.p[2]);
   }
 
   // ------------------------------------------------------------------ inventory helpers
@@ -624,6 +729,7 @@ export class ClientGame {
     this.updateRemotes(dt, serverNow);
     this.updateWorldObjects(dt, serverNow, now);
     this.effects.update(dt, serverNow);
+    this.decor.update(dt, now / 1000);
     this.updateCamera(dt, now, look);
     this.updateHud(dt, now, serverNow);
     if (me.alive && now - this.lastSend > 15) this.sendInput(now);
@@ -710,7 +816,8 @@ export class ClientGame {
     }
     if (leanTarget) leanTarget *= leanClearance(this.world, me, me.yaw, Math.sign(leanTarget));
     const scoped = wd?.scope && w.scope > 0;
-    const speedMul = (scoped && wd.scopedSpeed ? wd.scopedSpeed : wd?.speed || 1) * lerp(1, 0.8, wd?.scope ? 0 : w.ads);
+    let speedMul = (scoped && wd.scopedSpeed ? wd.scopedSpeed : wd?.speed || 1) * lerp(1, 0.8, wd?.scope ? 0 : w.ads);
+    if (this.tagUntil > now) speedMul *= 1 - tagSlow(this.tagAmt, (this.tagUntil - now) / TAG_MS);
     const jumpPressed = playing && inp.pressed('jump');
     const jumped = stepPlayer(this.world, me, {
       fwd: mv.y, right: mv.x, jump: jumpPressed, crouch: playing && inp.isDown('crouch'),
@@ -799,6 +906,7 @@ export class ClientGame {
     if (me.team === TEAM.DEF && b && b.state === 'planted' && this.phase === 'planted') {
       if (Math.hypot(b.p[0] - me.x, b.p[1] - me.y, b.p[2] - me.z) < USE_RANGE + 0.2) return 'defuse';
     }
+    if (this.reinforceTarget()) return 'reinforce';
     return this.dropTarget() ? 'pickup' : null;
   }
 
@@ -924,7 +1032,7 @@ export class ClientGame {
         if (r) { playerFirst = true; break; }
       }
       if (hit && !playerFirst) {
-        const surf = SURFACE_IDX[materialInfo(hit.box.mat).surface] ?? 0;
+        const surf = hit.box.reinforced ? 2 : SURFACE_IDX[materialInfo(hit.box.mat).surface] ?? 0;
         this.effects.impact(end, hit.n, surf, true);
         if (Math.random() < 0.5) this.audio.impact(surf, end);
       }
@@ -943,6 +1051,15 @@ export class ClientGame {
     this.viewmodel.fire(wd.type === 'sniper' || wd.type === 'shotgun' ? 1.6 : wd.type === 'pistol' ? 1.1 : 1);
     this.audio.gunshot(wd.id, null, true);
     this.effects.flashLight([muzzle.x, muzzle.y, muzzle.z], 0xffb060, 8, 0.05, 7);
+    this.effects.muzzleSmoke([muzzle.x, muzzle.y, muzzle.z], base, wd.type === 'shotgun' || wd.type === 'sniper' ? 1.6 : 1);
+    {
+      // brass flies out to the right of the view
+      const q = this.g.camera.quaternion;
+      const ep = tmpV.set(0.1, -0.08, -0.3).applyQuaternion(q).add(this.g.camera.position);
+      const right = tmpV2.set(1, 0, 0).applyQuaternion(q);
+      const out = 1.6 + Math.random() * 0.8, up = 1.5 + Math.random() * 0.8;
+      this.effects.casing([ep.x, ep.y, ep.z], [right.x * out + me.vx, up + right.y * out, right.z * out + me.vz], wd.type === 'shotgun');
+    }
     this.input.rumble(wd.type === 'sniper' || wd.type === 'shotgun' ? 0.8 : 0.25, 0.4, 60);
     if (wd.type === 'shotgun') setTimeout(() => this.viewmodel.play('pump', 0.45), 250);
     if (wd.type === 'sniper') {
@@ -1005,16 +1122,22 @@ export class ClientGame {
       };
       const alive = !!(s.flags & FLAG.ALIVE);
       const prev = rp.state;
-      const speed = prev ? Math.hypot(s.x - prev.x, s.z - prev.z) / Math.max(dt, 1e-3) : 0;
+      const idt = 1 / Math.max(dt, 1e-3);
+      const speed = prev ? Math.hypot(s.x - prev.x, s.z - prev.z) * idt : 0;
       rp.smoothSpeed = lerp(rp.smoothSpeed || 0, Math.min(speed, 8), 0.2);
       s.speed = rp.smoothSpeed;
+      rp.svx = lerp(rp.svx || 0, prev ? clamp((s.x - prev.x) * idt, -8, 8) : 0, 0.2);
+      rp.svz = lerp(rp.svz || 0, prev ? clamp((s.z - prev.z) * idt, -8, 8) : 0, 0.2);
+      s.vx = rp.svx; s.vz = rp.svz;
+      s.reloading = !!(s.flags & FLAG.RELOAD);
       s.onGround = !!(s.flags & FLAG.GROUND);
       s.planting = !!(s.flags & FLAG.PLANT);
       s.defusing = !!(s.flags & FLAG.DEFUSE);
+      s.reinforcing = !!(s.flags & FLAG.REINFORCE);
       s.bomb = !!(s.flags & FLAG.BOMB);
       s.alive = alive;
       if (alive && !rp.alive) { rp.model.revive(); }
-      if (!alive && rp.alive) rp.model.die(Math.random() < 0.5 ? 1 : -1);
+      if (!alive && rp.alive) rp.model.die(Math.random() < 0.5 ? 1 : -1);  // kill message missed
       rp.alive = alive;
       rp.state = s;
       const root = rp.model.root;
@@ -1054,11 +1177,24 @@ export class ClientGame {
     } else from = new THREE.Vector3(m.o[0], m.o[1], m.o[2]);
     this.effects.muzzleFlash(from, wd?.type === 'sniper' || wd?.type === 'shotgun');
     this.audio.gunshot(m.w, [m.o[0], m.o[1], m.o[2]], false);
+    if (rp && rp.model.root.visible && rp.model.weapon && wd?.type !== 'knife') {
+      const w = rp.model.weapon;
+      const ej = w.userData.eject;
+      if (ej && from.distanceToSquared(this.g.camera.position) < 900) {
+        const p = w.localToWorld(tmpV.set(ej[0], ej[1], ej[2]));
+        const yaw = rp.state.yaw;
+        const out = 1.4 + Math.random();
+        this.effects.casing([p.x, p.y, p.z], [Math.cos(yaw) * out, 1.6 + Math.random(), -Math.sin(yaw) * out], wd.type === 'shotgun');
+      }
+    }
     const eye = eyePosition(this.me);
     for (const e of m.e) {
       const [x, y, z, nx, ny, nz, surf] = e;
       if (surf !== 4) this.effects.impact([x, y, z], [nx, ny, nz], surf, true);
-      else this.effects.blood([x, y, z], [nx, ny, nz]);
+      else {
+        this.effects.blood([x, y, z], [nx, ny, nz]);
+        this.bloodSplatter([x, y, z], [x - m.o[0], y - m.o[1], z - m.o[2]]);
+      }
       this.effects.tracer([from.x, from.y, from.z], [x, y, z], m.e.length > 1 ? 0.3 : wd?.auto ? 0.6 : 1);
       // bullet whiz near our head
       if (this.me.alive) {
@@ -1084,6 +1220,19 @@ export class ClientGame {
         if (sn[i].t <= renderT) { a = sn[i]; b = sn[Math.min(i + 1, sn.length - 1)]; break; }
       }
       const k = b.t > a.t ? clamp((renderT - a.t) / (b.t - a.t), 0, 1) : 0;
+      const st = this.stuck.get(g.id);
+      if (st) {
+        // flush against the surface, blinking faster as the fuse runs out
+        g.mesh.position.set(st.p[0], st.p[1], st.p[2]);
+        g.mesh.quaternion.setFromUnitVectors(tmpV2.set(0, 0, 1), tmpV.set(st.n[0], st.n[1], st.n[2]));
+        const left = st.until - serverNow;
+        if (now >= st.nextBeep && left > 0) {
+          st.nextBeep = now + clamp(left / 5, 70, 300);
+          this.audio.breachBeep(st.p);
+          this.effects.sparks.spawn(st.p[0] + st.n[0] * 0.03, st.p[1] + st.n[1] * 0.03, st.p[2] + st.n[2] * 0.03, 0, 0, 0, 6, 0.4, 0.3, 1, 0.07, 0.06, 0, 0, 0);
+        }
+        continue;
+      }
       g.mesh.position.set(lerp(a.x, b.x, k), lerp(a.y, b.y, k), lerp(a.z, b.z, k));
       g.mesh.rotation.x += dt * 8;
       g.mesh.rotation.z += dt * 5;
@@ -1206,6 +1355,10 @@ export class ClientGame {
     }
     hud.crosshair(chVisible && this.w.ads < 0.8, Math.min(60, spreadPx));
     hud.vitals(me.hp, me.armor, me.helmet, me.kit, me.inv.bomb);
+    // low-health desaturation + red vignette, with a short flash on every hit taken
+    this.hurtFlash = Math.max(0, (this.hurtFlash || 0) - dt * 1.8);
+    const low = me.alive && me.hp < 35 ? (1 - me.hp / 35) * (0.75 + 0.25 * Math.sin(now * 0.006)) : 0;
+    this.g.setHurt(me.alive ? Math.min(1, Math.max(low * 0.85, this.hurtFlash * 0.55)) : 0);
     hud.money(me.money, this.modeInfo.economy);
     const it = this.curItem();
     hud.ammo(wd?.name || '', it ? it[1] : 0, it ? it[2] : 0, wd?.mag, !!it);
@@ -1248,6 +1401,7 @@ export class ClientGame {
       const k = this.keyName('use');
       if (ut === 'plant') hint = `Hold <b>${k}</b> to plant the bomb`;
       else if (ut === 'defuse') hint = `Hold <b>${k}</b> to defuse${me.kit ? '' : ' (no kit)'}`;
+      else if (ut === 'reinforce') hint = `Hold <b>${k}</b> to reinforce this wall (${me.reinforceLeft} left)`;
       else if (ut === 'pickup') { const d = this.dropTarget(); hint = `Press <b>${k}</b> to pick up ${esc(WEAPONS[d.wid]?.name || '')}`; }
       else if (this.canBuy() && this.modeInfo.economy && this.phase === 'freeze') hint = `Press <b>${this.keyName('buy')}</b> to open the buy menu`;
       else if (this.canBuy() && !this.modeInfo.economy && this.mode !== 'gungame') hint = `Press <b>${this.keyName('buy')}</b> to choose your loadout`;
@@ -1264,7 +1418,7 @@ export class ClientGame {
     if (this.radarFrame % 2 === 0) this.drawRadar();
     // flash overlay
     this.updateFlash(now);
-    hud.fps(this.settings.showFps ? `${Math.round(this.g.fps)} FPS · ${this.g.quality.toUpperCase()} · ${this.g.resolutionLabel()} · ${Math.round(this.net.rtt)}ms` : '');
+    hud.fps(this.settings.showFps ? `${this.g.perfLabel()} · CPU ${this.cpuMs?.toFixed(1) ?? '?'} ms · ping ${Math.round(this.net.rtt)} ms` : '');
     hud.netWarn(this.net.connected && performance.now() - this.net.lastMessageAt > 3000);
   }
 
@@ -1278,7 +1432,7 @@ export class ClientGame {
   drawRadar() {
     const me = this.me;
     const spec = !me.alive && this.specId != null ? this.players.get(this.specId)?.state : null;
-    const center = spec ? { x: spec.x, z: spec.z, yaw: spec.yaw } : { x: me.x, z: me.z, yaw: me.yaw };
+    const center = spec ? { x: spec.x, y: spec.y, z: spec.z, yaw: spec.yaw } : { x: me.x, y: me.y, z: me.z, yaw: me.yaw };
     const list = [];
     const eye = eyePosition(me);
     const now = performance.now();
@@ -1300,7 +1454,7 @@ export class ClientGame {
         if (!(rp.spottedUntil > now)) continue;
       }
       const color = this.ffa ? '#ff5050' : enemy ? '#ff4040' : rp.team === 1 ? '#ff9a4d' : '#4aa8ff';
-      list.push({ x: s.x, z: s.z, yaw: s.yaw, color, enemy, dead: !rp.alive });
+      list.push({ x: s.x, y: s.y, z: s.z, yaw: s.yaw, color, enemy, dead: !rp.alive });
     }
     const b = this.bomb;
     let bomb = null;

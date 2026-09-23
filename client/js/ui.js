@@ -344,12 +344,12 @@ export class UI {
     const items = [
       ['h', 'KEYBOARD & MOUSE'],
       ['Move', `${k('forward')} ${k('left')} ${k('back')} ${k('right')}`], ['Jump', k('jump')], ['Crouch', k('crouch')], ['Walk (quiet)', k('walk')],
-      ['Fire', k('fire')], ['Aim down sights / scope', k('ads')], ['Reload', k('reload')], ['Use · plant · defuse · pick up', k('use')],
+      ['Fire', k('fire')], ['Aim down sights / scope', k('ads')], ['Reload', k('reload')], ['Use · plant · defuse · pick up · reinforce (hold)', k('use')],
       ['Lean left / right', `${k('leanL')} / ${k('leanR')}`], ['Weapons', '1 2 3 4 5 · wheel'], ['Last weapon', k('lastWeapon')], ['Drop weapon', k('drop')],
       ['Buy menu', k('buy')], ['Scoreboard', k('scoreboard')], ['Chat all / team', `${k('chat')} / ${k('teamChat')}`], ['Inspect weapon', k('inspect')], ['Menu', 'Esc'],
       ['h', 'CONTROLLER (Xbox / PlayStation)'],
       ['Move / look', 'Left stick / right stick'], ['Fire / aim', 'RT / LT  (R2 / L2)'], ['Jump', 'A  (✕)'], ['Crouch', 'B  (○)'],
-      ['Reload · hold to use/plant/defuse', 'X  (□)'], ['Next weapon', 'Y  (△)'], ['Lean left / right', 'LB / RB  (L1 / R1)'], ['Knife', 'R3'], ['Walk toggle', 'L3'],
+      ['Reload · hold to use/plant/defuse/reinforce', 'X  (□)'], ['Next weapon', 'Y  (△)'], ['Lean left / right', 'LB / RB  (L1 / R1)'], ['Knife', 'R3'], ['Walk toggle', 'L3'],
       ['Buy menu', 'D-pad up'], ['Drop weapon', 'D-pad down'], ['Grenades', 'D-pad left'], ['Last weapon', 'D-pad right'], ['Scoreboard', 'View / Share'], ['Menu', 'Menu / Options'],
     ];
     $('controls-grid').innerHTML = items.map(([a, b]) => (a === 'h' ? `<h4>${b}</h4>` : `<div class="ci"><span>${a}</span><b>${esc(b)}</b></div>`)).join('');
@@ -370,7 +370,7 @@ export class UI {
     let idx = 0;
     this.buyItems = [];
     grid.innerHTML = BUY_MENU.map((cat, ci) => {
-      const items = cat.items.filter((id) => !(id === 'kit' && (team !== 2 || state.mode !== 'defuse')));
+      const items = cat.items.filter((id) => buyable(id, team, state.mode));
       return `<div class="buy-cat"><div class="buy-cat-title${this.buyCat === ci ? ' sel' : ''}"><b>${ci + 1}</b>${cat.name}</div>${items.map((id, ii) => {
         const w = WEAPONS[id];
         const price = free ? 0 : itemPrice(id);
@@ -382,7 +382,7 @@ export class UI {
         else if (id === 'helmet') owned = armor >= 100 && helmet;
         else if (id === 'kit') owned = kit;
         const poor = !free && price > money;
-        const stats = w && w.damage ? `DMG ${w.damage}${w.pellets > 1 ? '×' + w.pellets : ''} · ${w.auto ? 'AUTO' : 'SEMI'} · ${w.mag ?? ''}${w.mag ? ' rnd' : ''}` : w?.type === 'grenade' ? (id === 'frag' ? 'High explosive' : id === 'flash' ? 'Blinds enemies' : 'Blocks vision 18s') : id === 'kit' ? 'Halves defuse time' : 'Reduces damage';
+        const stats = w && w.damage ? `DMG ${w.damage}${w.pellets > 1 ? '×' + w.pellets : ''} · ${w.auto ? 'AUTO' : 'SEMI'} · ${w.mag ?? ''}${w.mag ? ' rnd' : ''}` : w?.type === 'grenade' ? (id === 'frag' ? 'High explosive' : id === 'flash' ? 'Blinds enemies' : id === 'breach' ? 'Sticks, blows walls open' : 'Blocks vision 18s') : id === 'kit' ? 'Halves defuse time' : 'Reduces damage';
         const my = idx++;
         this.buyItems.push(id);
         const displayPrice = id === 'helmet' && armor >= 100 && !helmet && !free ? 350 : price;
@@ -402,7 +402,7 @@ export class UI {
       this.renderBuy(this.buyState);
     } else {
       const cat = BUY_MENU[this.buyCat];
-      const items = cat.items.filter((id) => !(id === 'kit' && (this.buyState.team !== 2 || this.buyState.mode !== 'defuse')));
+      const items = cat.items.filter((id) => buyable(id, this.buyState.team, this.buyState.mode));
       const id = items[digit - 1];
       this.buyCat = -1;
       if (id) this.emit('buy', id);
@@ -491,4 +491,12 @@ function ensureOption(sel, value) {
     sel.appendChild(o);
     sel.value = String(value);
   }
+}
+
+// Team-only items (defuse kit for defenders, breach charges for attackers) only matter in Defuse.
+function buyable(id, team, mode) {
+  if (id === 'kit') return team === 2 && mode === 'defuse';
+  const w = WEAPONS[id];
+  if (w?.team && mode === 'defuse') return team === w.team;
+  return true;
 }

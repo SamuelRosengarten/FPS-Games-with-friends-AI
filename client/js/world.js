@@ -1,6 +1,7 @@
 // Builds renderable meshes for a map: merged static geometry per material, breakable panels, lights, markings.
 
 import * as THREE from 'three';
+const ZERO_SCALE = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const STRIPS = [0, 0.35, 1.1, 2.4];
 
@@ -26,7 +27,9 @@ export class WorldView {
     const m = this.map;
     const c = Math.floor((x - m.x0) / m.cellSize), r = Math.floor((z - m.z0) / m.cellSize);
     if (r < 0 || c < 0 || r >= m.rows || c >= m.cols) return false;
-    return m.roofed[r][c] && y < m.roofHeight;
+    if (m.upper && y >= m.upper.floorY - 0.05) return m.upper.roofed[r][c] && y < m.upper.floorY + m.upper.roofHeight;
+    const ceiling = m.upper && m.upper.grid[r][c] !== ' ' ? m.upper.floorY - 0.3 : m.upper ? m.upper.floorY + m.upper.roofHeight : m.roofHeight;
+    return m.roofed[r][c] && y < ceiling;
   }
 
   isWallCell(r, c) {
@@ -37,11 +40,12 @@ export class WorldView {
   }
 
   // Baked ambient term for a vertex.
-  ambientAt(x, y, z, nx, ny, nz, kind) {
+  ambientAt(x, y, z, nx, ny, nz, kind, floor = 0) {
     let k = 1;
     // contact darkening near the floor on vertical faces
-    if (ny === 0 && kind !== 'crate') k *= 0.62 + 0.38 * Math.min(1, Math.pow(y / 1.6, 0.7));
-    else if (ny === 0) k *= 0.75 + 0.25 * Math.min(1, y / 0.8);
+    const ly = Math.max(0, y - floor);
+    if (ny === 0 && kind !== 'crate') k *= 0.62 + 0.38 * Math.min(1, Math.pow(ly / 1.6, 0.7));
+    else if (ny === 0) k *= 0.75 + 0.25 * Math.min(1, ly / 0.8);
     // interiors
     const sx = x + nx * 0.25, sz = z + nz * 0.25;
     if (this.roofedAt(sx, sz, y - 0.01)) k *= ny < 0 ? 0.55 : 0.66;
@@ -57,8 +61,10 @@ export class WorldView {
       return byMat.get(mat);
     };
 
+    const barrels = [];
     for (const b of map.boxes) {
       if (b.destructible) continue;
+      if (b.kind === 'barrel') { barrels.push(b); continue; }
       if (b.kind === 'ground') { this.buildGround(push(b.mat), b); continue; }
       const buf = push(b.mat);
       this.addBox(buf, b);
@@ -82,8 +88,44 @@ export class WorldView {
     }
 
     this.buildPanels();
+    this.buildBarrels(barrels);
     this.buildLights();
     this.buildMarkings();
+  }
+
+  // Oil drums: collision is the prop box, visuals are ribbed cylinders tinted per barrel.
+  buildBarrels(list) {
+    if (!list.length) return;
+    const body = new THREE.CylinderGeometry(0.38, 0.38, 1, 20, 1, false);
+    const pos = body.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      const rib = Math.abs(y) < 0.46 && (Math.abs(Math.abs(y) - 0.18) < 0.03) ? 1.035 : 1;
+      pos.setX(i, pos.getX(i) * rib);
+      pos.setZ(i, pos.getZ(i) * rib);
+    }
+    body.computeVertexNormals();
+    const tex = this.tex.textures('barrel');
+    const mat = new THREE.MeshStandardMaterial({ map: tex.map, normalMap: tex.normalMap, roughnessMap: tex.roughnessMap, roughness: 0.9, metalness: 0.35, color: 0xffffff });
+    const mesh = new THREE.InstancedMesh(body, mat, list.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+    const tints = [0x2f5f9e, 0x44743c, 0xd0a22e, 0xa83224, 0x7a7d80];
+    const col = new THREE.Color();
+    list.forEach((b, i) => {
+      const h = b.max[1] - b.min[1];
+      const r = Math.min(b.max[0] - b.min[0], b.max[2] - b.min[2]) / 0.76;
+      p.set((b.min[0] + b.max[0]) / 2, b.min[1] + h / 2, (b.min[2] + b.max[2]) / 2);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), (b.id * 1.7) % 6.28);
+      sc.set(r, h, r);
+      m4.compose(p, q, sc);
+      mesh.setMatrixAt(i, m4);
+      mesh.setColorAt(i, col.set(tints[b.id % tints.length]));
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.group.add(mesh);
   }
 
   // Ground split into per-cell quads so it can carry baked shading.
@@ -151,15 +193,16 @@ export class WorldView {
     faces.push({ n: [0, 0, -1], corners: [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], u: 'x', flipU: true });
     // +Y
     faces.push({ n: [0, 1, 0], corners: [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], top: true });
-    // -Y (skip when resting on the ground)
-    if (y0 > 0.01) faces.push({ n: [0, -1, 0], corners: [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], top: true });
+    // -Y (skip when resting on the ground or an upper floor)
+    const floor = b.floorY || 0;
+    if (y0 > floor + 0.01 || (b.kind === 'slab' && y0 > 0.01)) faces.push({ n: [0, -1, 0], corners: [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], top: true });
 
     for (const f of faces) {
       const [nx, ny, nz] = f.n;
       if (!f.top) {
         // split vertical faces into horizontal strips for smooth contact shading near the floor
         const hs = [y0];
-        for (const s of STRIPS) if (s > y0 + 0.05 && s < y1 - 0.05 && y0 < 0.01) hs.push(s);
+        for (const s of STRIPS) if (floor + s > y0 + 0.05 && floor + s < y1 - 0.05 && y0 < floor + 0.01) hs.push(floor + s);
         hs.push(y1);
         const [c0, c1] = [f.corners[0], f.corners[1]];
         for (let i = 0; i < hs.length - 1; i++) {
@@ -192,7 +235,7 @@ export class WorldView {
         else { u = (f.flipU ? -p[2] : p[2]) / sc; v = p[1] / sc; }
       }
       buf.uv.push(u, v);
-      const k = this.ambientAt(p[0], p[1], p[2], nx, ny, nz, kind);
+      const k = this.ambientAt(p[0], p[1], p[2], nx, ny, nz, kind, b.kind === 'slab' ? 0 : b.floorY || 0);
       buf.col.push(k, k, k);
     }
     buf.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -224,6 +267,37 @@ export class WorldView {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.panelMesh = mesh;
     this.group.add(mesh);
+    // steel plates for reinforced panels (hidden until a defender reinforces)
+    const steel = this.tex.material('metal').clone();
+    steel.vertexColors = false;
+    steel.color.set(0xb4bac0);
+    steel.metalness = 0.55;
+    const plates = new THREE.InstancedMesh(geo, steel, ids.length);
+    plates.castShadow = true;
+    plates.receiveShadow = true;
+    ids.forEach((id, i) => plates.setMatrixAt(i, ZERO_SCALE));
+    plates.instanceMatrix.needsUpdate = true;
+    this.plateMesh = plates;
+    this.group.add(plates);
+  }
+
+  setPanelReinforced(id, on) {
+    const p = this.panels.get(id);
+    if (!p || !this.plateMesh) return;
+    p.reinforced = on;
+    const b = p.box;
+    if (on) {
+      const m4 = new THREE.Matrix4();
+      const pad = 0.03;
+      m4.makeScale(b.max[0] - b.min[0] + pad, b.max[1] - b.min[1] + pad * 0.5, b.max[2] - b.min[2] + pad);
+      m4.setPosition((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2);
+      this.plateMesh.setMatrixAt(p.index, m4);
+      this.setPanelMatrix(this.panelMesh, p.index, b, 0);
+      this.panelMesh.instanceMatrix.needsUpdate = true;
+    } else {
+      this.plateMesh.setMatrixAt(p.index, ZERO_SCALE);
+    }
+    this.plateMesh.instanceMatrix.needsUpdate = true;
   }
 
   setPanelMatrix(mesh, i, b, s) {
@@ -245,6 +319,9 @@ export class WorldView {
     const indoor = this.roofedAt((b.min[0] + b.max[0]) / 2, (b.min[2] + b.max[2]) / 2, 1) ? 0.6 : 1;
     if (hp <= 0) {
       this.setPanelMatrix(this.panelMesh, p.index, b, 0);
+      if (p.reinforced) this.setPanelReinforced(id, false);
+    } else if (p.reinforced) {
+      this.setPanelMatrix(this.panelMesh, p.index, b, 0);
     } else {
       this.setPanelMatrix(this.panelMesh, p.index, b, 1);
       col.setScalar(indoor * (0.45 + 0.55 * (hp / 100)));
@@ -256,7 +333,10 @@ export class WorldView {
   }
 
   resetPanels() {
-    for (const [id] of this.panels) this.setPanelHp(id, 100);
+    for (const [id, p] of this.panels) {
+      if (p.reinforced) this.setPanelReinforced(id, false);
+      this.setPanelHp(id, 100);
+    }
   }
 
   buildLights() {
@@ -285,7 +365,7 @@ export class WorldView {
       const mat = new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2 });
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
       mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(cx, 0.02, cz);
+      mesh.position.set(cx, (z.floor || 0) + 0.02, cz);
       mesh.receiveShadow = true;
       mesh.renderOrder = 1;
       this.group.add(mesh);
@@ -303,7 +383,7 @@ export class WorldView {
 function letterTexture(ch) {
   const c = document.createElement('canvas');
   c.width = c.height = 256;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true });
   g.font = '900 200px Arial, sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'middle';

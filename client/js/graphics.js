@@ -9,13 +9,18 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
+// targetMP: megapixels the preset aims to render at the start (dynamic resolution then probes up/down)
 export const PRESETS = {
-  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false, bloom: false, aa: 'none', msaa: 0, env: 0.5, particles: 0.5 },
-  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false, bloom: false, aa: 'fxaa', msaa: 0, env: 0.45, particles: 0.75 },
-  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false, bloom: true,  aa: 'smaa', msaa: 0, env: 0.45, particles: 1 },
-  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: true,  bloom: true,  aa: 'msaa', msaa: 4, env: 0.5, particles: 1 },
+  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false, bloom: false, aa: 'none', msaa: 0, env: 0.5, particles: 0.5, targetMP: 1.2, grade: false },
+  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false, bloom: false, aa: 'fxaa', msaa: 0, env: 0.45, particles: 0.75, targetMP: 2.2, grade: true },
+  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false, bloom: true,  aa: 'smaa', msaa: 0, env: 0.45, particles: 1, targetMP: 3.5, grade: true },
+  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: true,  bloom: true,  aa: 'msaa', msaa: 4, env: 0.5, particles: 1, targetMP: 5.2, grade: true },
 };
+
+// Steps taken, in order, when even the minimum render scale can't hold 60 FPS.
+const FALLBACKS = ['ao', 'bloom', 'msaa', 'shadows'];
 
 const SKY_VS = /* glsl */`
   varying vec3 vDir;
@@ -90,6 +95,45 @@ function makeSky(theme, radius) {
   return mesh;
 }
 
+// Display-space color grading: lift/gain tint, contrast, saturation, vignette, film grain, low-health desaturation.
+const GradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uLift: { value: new THREE.Vector3(0, 0, 0) },
+    uGain: { value: new THREE.Vector3(1, 1, 1) },
+    uContrast: { value: 1.05 },
+    uSaturation: { value: 1.05 },
+    uVignette: { value: 0.28 },
+    uGrain: { value: 0.025 },
+    uTime: { value: 0 },
+    uHurt: { value: 0 },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform vec3 uLift, uGain;
+    uniform float uContrast, uSaturation, uVignette, uGrain, uTime, uHurt;
+    varying vec2 vUv;
+    void main() {
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      c = c * uGain + uLift * (1.0 - c);
+      c = (c - 0.5) * uContrast + 0.5;
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(vec3(l), c, uSaturation * (1.0 - uHurt * 0.7));
+      vec2 d = (vUv - 0.5) * vec2(1.0, 0.82);
+      float v = smoothstep(0.78, 0.2, length(d));
+      c *= mix(1.0 - uVignette - uHurt * 0.35, 1.0, v);
+      c.r += uHurt * (1.0 - v) * 0.18;
+      float n = fract(sin(dot(vUv * (fract(uTime) * 91.7 + 1.0), vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+      c += n * uGrain;
+      gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+    }
+  `,
+};
+
 // Hide sprites / transparent effects from the AO g-buffer.
 GTAOPass.prototype._overrideVisibility = function () {
   const cache = this._visibilityCache;
@@ -149,6 +193,7 @@ export class Graphics {
     renderer.toneMappingExposure = 1.0;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.info.autoReset = false; // we reset once per frame so the counters cover every pass
     container.appendChild(renderer.domElement);
     this.renderer = renderer;
     this.canvas = renderer.domElement;
@@ -203,7 +248,8 @@ export class Graphics {
       this.sun.shadow.mapSize.set(p.shadows, p.shadows);
       if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
     }
-    this.renderScale = 1;
+    this.degrade = 0;
+    this.renderScale = this.initialScale();
     // materials need recompiling when shadows toggle
     this.scene.traverse((o) => { if (o.material) { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((m) => { m.needsUpdate = true; }); } });
     this.buildComposer();
@@ -215,6 +261,20 @@ export class Graphics {
     return Math.min(dpr, this.preset.pixelRatio) * (this.s.maxRenderScale || 1);
   }
 
+  // Start below full resolution on very large / Retina screens so the first seconds are smooth.
+  initialScale() {
+    if (!this.s.dynamicRes) return 1;
+    const pr = this.basePixelRatio();
+    const mp = (window.innerWidth * pr) * (window.innerHeight * pr) / 1e6;
+    return Math.max(0.55, Math.min(1, Math.sqrt(this.preset.targetMP / Math.max(mp, 0.1))));
+  }
+
+  // Is a feature still active after automatic fallbacks?
+  feature(name) {
+    const i = FALLBACKS.indexOf(name);
+    return i < 0 || this.degrade <= i;
+  }
+
   buildComposer() {
     if (this.composer) {
       this.composer.renderTarget1.dispose();
@@ -222,11 +282,12 @@ export class Graphics {
       for (const pass of this.composer.passes) pass.dispose?.();
     }
     const p = this.preset;
-    const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: p.msaa });
+    const msaa = this.feature('msaa') ? p.msaa : 0;
+    const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: msaa });
     const composer = new EffectComposer(this.renderer, rt);
     composer.addPass(new RenderPass(this.scene, this.camera));
     this.gtao = null;
-    if (p.ao) {
+    if (p.ao && this.feature('ao')) {
       const gtao = new GTAOPass(this.scene, this.camera, 1, 1);
       gtao.output = GTAOPass.OUTPUT.Default;
       gtao.blendIntensity = 0.9;
@@ -240,13 +301,20 @@ export class Graphics {
     this.overlay = new OverlayPass(this.vmScene, this.vmCamera);
     composer.addPass(this.overlay);
     this.bloom = null;
-    if (p.bloom) {
+    if (p.bloom && this.feature('bloom')) {
       this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.5, 0.92);
       composer.addPass(this.bloom);
     }
     composer.addPass(new OutputPass());
-    if (p.aa === 'smaa') composer.addPass(new SMAAPass());
-    else if (p.aa === 'fxaa') composer.addPass(new FXAAPass());
+    this.grade = null;
+    if (p.grade) {
+      this.grade = new ShaderPass(GradeShader);
+      if (this.gradeCfg) this.applyGrade(this.gradeCfg);
+      composer.addPass(this.grade);
+    }
+    const aa = p.aa === 'msaa' && !msaa ? 'fxaa' : p.aa;
+    if (aa === 'smaa') composer.addPass(new SMAAPass());
+    else if (aa === 'fxaa') composer.addPass(new FXAAPass());
     this.composer = composer;
   }
 
@@ -339,7 +407,23 @@ export class Graphics {
     this.vmSun.color.set(th.sun.color);
     this.themeHemi = th.hemi.intensity;
     this.themeSun = th.sun.intensity;
+    this.applyGrade(th.grade || {});
   }
+
+  applyGrade(g) {
+    this.gradeCfg = g;
+    if (!this.grade) return;
+    const u = this.grade.uniforms;
+    u.uLift.value.set(...(g.lift || [0, 0, 0]));
+    u.uGain.value.set(...(g.gain || [1, 1, 1]));
+    u.uContrast.value = g.contrast ?? 1.05;
+    u.uSaturation.value = g.saturation ?? 1.05;
+    u.uVignette.value = g.vignette ?? 0.28;
+    u.uGrain.value = g.grain ?? 0.02;
+  }
+
+  // 0..1 low-health effect (desaturation + red vignette)
+  setHurt(v) { if (this.grade) this.grade.uniforms.uHurt.value = v; }
 
   // indoor = 0..1 how much the player is under a roof (dims the viewmodel lighting)
   setViewmodelLight(indoor) {
@@ -350,7 +434,9 @@ export class Graphics {
 
   // ---------------------------------------------------------------- frame
   render(dt) {
+    this.renderer.info.reset();
     this.updateDynamicRes(dt);
+    if (this.grade) this.grade.uniforms.uTime.value += dt;
     if (this.sky) {
       this.sky.material.uniforms.uTime.value += dt;
       this.sky.position.copy(this.camera.position);
@@ -363,18 +449,34 @@ export class Graphics {
     this.fpsFrames++;
     this.fpsTime += dt;
     if (this.fpsTime >= 0.5) { this.fps = this.fpsFrames / this.fpsTime; this.fpsFrames = 0; this.fpsTime = 0; }
-    if (!this.s.dynamicRes || ms > 250) return;
+    if (!this.s.dynamicRes || ms > 100) return; // ignore hitches (shader compiles, tab switches)
     this.frameEma += (ms - this.frameEma) * 0.08;
     const now = performance.now();
+    const MIN = 0.5;
     if (this.frameEma > 18.2) {
       this.slowTime += dt;
       this.fastTime = 0;
-      if (this.slowTime > 0.35 && this.renderScale > 0.5) {
-        this.renderScale = Math.max(0.5, this.renderScale * 0.88);
+      if (this.slowTime > 0.35 && this.renderScale > MIN) {
+        this.renderScale = Math.max(MIN, this.renderScale * 0.88);
         this.slowTime = 0;
         this.lastDrop = now;
         this.frameEma = 16.7;
         this.resize();
+      } else if (this.slowTime > 2 && this.renderScale <= MIN && this.degrade < FALLBACKS.length) {
+        // still too slow at the lowest resolution: switch off the most expensive effect
+        this.degrade++;
+        this.slowTime = 0;
+        this.frameEma = 16.7;
+        this.lastDrop = now;
+        if (FALLBACKS[this.degrade - 1] === 'shadows' && this.preset.shadows > 1024) {
+          const size = this.preset.shadows / 2;
+          this.sun.shadow.mapSize.set(size, size);
+          if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
+        }
+        this.buildComposer();
+        this.renderScale = 0.75;
+        this.resize();
+        console.info(`[breachpoint] performance fallback: disabled ${FALLBACKS[this.degrade - 1]}`);
       }
     } else {
       this.slowTime = 0;
@@ -388,6 +490,12 @@ export class Graphics {
         }
       } else this.fastTime = 0;
     }
+  }
+
+  perfLabel() {
+    const info = this.renderer.info.render;
+    const off = FALLBACKS.slice(0, this.degrade);
+    return `${Math.round(this.fps)} FPS · ${this.quality.toUpperCase()}${off.length ? ` (−${off.join(', −')})` : ''} · ${this.resolutionLabel()} (${Math.round(this.renderScale * 100)}%) · ${info.calls} calls · ${Math.round(info.triangles / 1000)}k tris`;
   }
 
   resolutionLabel() {
