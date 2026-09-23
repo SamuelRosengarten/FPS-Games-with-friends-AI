@@ -65,8 +65,14 @@ export class WorldView {
     for (const b of map.boxes) {
       if (b.destructible) continue;
       if (b.kind === 'barrel') { barrels.push(b); continue; }
+      if (b.kind === 'truck') continue; // modelled by the decor (body on a chassis with wheels)
       if (b.kind === 'ground') { this.buildGround(push(b.mat), b); continue; }
       const buf = push(b.mat);
+      // sandbag walls are dressed with individual bags by the decor; keep only a core to fill the gaps
+      if (b.kind === 'cover' && b.mat === 'sandbag') {
+        this.addBox(buf, { ...b, min: [b.min[0] + 0.12, b.min[1], b.min[2] + 0.12], max: [b.max[0] - 0.12, b.max[1] - 0.07, b.max[2] - 0.12] });
+        continue;
+      }
       this.addBox(buf, b);
     }
 
@@ -93,23 +99,44 @@ export class WorldView {
     this.buildMarkings();
   }
 
-  // Oil drums: collision is the prop box, visuals are ribbed cylinders tinted per barrel.
+  // Oil drums: collision is the prop box, visuals are a 55-gallon drum (rolled chimes, rolling hoops,
+  // recessed lid with bungs) with worn paint, tinted per barrel.
   buildBarrels(list) {
     if (!list.length) return;
-    const body = new THREE.CylinderGeometry(0.38, 0.38, 1, 20, 1, false);
-    const pos = body.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i);
-      const rib = Math.abs(y) < 0.46 && (Math.abs(Math.abs(y) - 0.18) < 0.03) ? 1.035 : 1;
-      pos.setX(i, pos.getX(i) * rib);
-      pos.setZ(i, pos.getZ(i) * rib);
+    // profile in units of radius (x) and height (y, -0.5..0.5)
+    const prof = [
+      [0, -0.5], [0.95, -0.5], [0.995, -0.492], [1.0, -0.478], [0.99, -0.466], [0.978, -0.46],
+      [0.978, -0.2], [0.99, -0.19], [1.012, -0.182], [1.012, -0.158], [0.99, -0.15], [0.978, -0.14],
+      [0.978, 0.14], [0.99, 0.15], [1.012, 0.158], [1.012, 0.182], [0.99, 0.19], [0.978, 0.2],
+      [0.978, 0.46], [0.99, 0.466], [1.0, 0.478], [0.995, 0.492], [0.95, 0.5], [0.93, 0.49], [0.9, 0.484], [0, 0.484],
+    ].map(([r, y]) => new THREE.Vector2(r * 0.38, y));
+    const body = new THREE.LatheGeometry(prof, 28);
+    const parts = [body.toNonIndexed()];
+    for (const [bx, bz, br] of [[0.2, 0.08, 0.04], [-0.17, -0.12, 0.028]]) {
+      const bung = new THREE.CylinderGeometry(br, br, 0.022, 10).toNonIndexed();
+      bung.translate(bx, 0.495, bz);
+      parts.push(bung);
     }
-    body.computeVertexNormals();
+    let count = 0;
+    for (const g of parts) count += g.attributes.position.count;
+    const pos = new Float32Array(count * 3), nor = new Float32Array(count * 3), uv = new Float32Array(count * 2);
+    let o = 0;
+    for (const g of parts) {
+      pos.set(g.attributes.position.array, o * 3);
+      nor.set(g.attributes.normal.array, o * 3);
+      if (g.attributes.uv) uv.set(g.attributes.uv.array, o * 2);
+      o += g.attributes.position.count;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.computeBoundingSphere();
     const tex = this.tex.textures('barrel');
-    const mat = new THREE.MeshStandardMaterial({ map: tex.map, normalMap: tex.normalMap, roughnessMap: tex.roughnessMap, roughness: 0.9, metalness: 0.35, color: 0xffffff });
-    const mesh = new THREE.InstancedMesh(body, mat, list.length);
+    const mat = new THREE.MeshStandardMaterial({ map: tex.map, normalMap: tex.normalMap, roughnessMap: tex.roughnessMap, metalnessMap: tex.roughnessMap, roughness: 1, metalness: 1, color: 0xffffff });
+    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
-    const tints = [0x2f5f9e, 0x44743c, 0xd0a22e, 0xa83224, 0x7a7d80];
+    const tints = [0x2f5a8e, 0x3f6a38, 0xc8961f, 0x9a2f22, 0x6e7275, 0x2b2d30];
     const col = new THREE.Color();
     list.forEach((b, i) => {
       const h = b.max[1] - b.min[1];

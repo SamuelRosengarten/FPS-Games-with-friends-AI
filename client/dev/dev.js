@@ -109,8 +109,9 @@ if (view === 'vm') {
     m.rotation.y = Math.PI / 2;
     g.scene.add(m);
   });
-  g.camera.position.set(0, 1.1, 2.4);
-  g.camera.lookAt(0, 1.0, 0);
+  const wc = (q.get('cam') || '0,1.1,2.4,0,1.0,0').split(',').map(Number);
+  g.camera.position.set(wc[0], wc[1], wc[2]);
+  g.camera.lookAt(wc[3], wc[4], wc[5]);
   label.textContent = 'weapons';
 }
 g.setFov(settings.fov);

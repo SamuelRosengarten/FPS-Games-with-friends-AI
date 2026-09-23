@@ -95,6 +95,11 @@ function toTextures(tc, normalStrength, aniso) {
     rough[i * 4 + 3] = 255;
   }
   const H = tc.h;
+  // normalised height in the roughness texture's alpha (parallax occlusion mapping)
+  let hMin = Infinity, hMax = -Infinity;
+  for (let i = 0; i < S * S; i++) { if (H[i] < hMin) hMin = H[i]; if (H[i] > hMax) hMax = H[i]; }
+  const hK = hMax > hMin ? 1 / (hMax - hMin) : 0;
+  for (let i = 0; i < S * S; i++) rough[i * 4 + 3] = Math.round(clamp01((H[i] - hMin) * hK) * 255);
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const xm = (x - 1 + S) % S, xp = (x + 1) % S, ym = (y - 1 + S) % S, yp = (y + 1) % S;
@@ -195,9 +200,16 @@ const RECIPES = {
       const mc = c.map((x) => x * 0.62);
       const weather = smooth(0.55, 0.8, n.fbm(u + 0.3, v * 0.5, 4, 4)) * 0.18;
       c = c.map((x, k) => mix(x, mc[k], mortar) - weather * (k === 2 ? 0.02 : 0.08));
+      // rounded, chipped block edges, pitted faces, dust settled on the top of each block
+      const bevel = smooth(0.0, 0.2, b.edge);
+      const edgeN = n.v(u * 64 + bh * 13, v * 64, 64);
+      const chipE = smooth(0.3, 0.0, b.edge) * smooth(0.5, 0.78, edgeN) * (1 - mortar);
       const chip = smooth(0.8, 0.95, n.v(u * 24 + bh * 7, v * 24, 24)) * (1 - mortar) * 0.6;
-      const h = (1 - mortar) * (0.7 + noise * 0.3) - chip * 0.3 + fine * 0.08;
-      tc.set(i, c, h, 0.88 + fine * 0.08 - weather * 0.1);
+      const pits = smooth(0.72, 0.92, n.v(u * 96, v * 96, 96)) * (1 - mortar);
+      const dust = smooth(0.7, 1.0, b.fy) * (1 - mortar) * 0.12;
+      c = c.map((x, k) => x * (1 + chipE * 0.1 - pits * 0.14) + dust * [0.1, 0.08, 0.05][k]);
+      const h = (1 - mortar) * (0.45 + 0.55 * bevel * (0.72 + noise * 0.28)) - chip * 0.3 - chipE * 0.35 - pits * 0.1 + fine * 0.06;
+      tc.set(i, c, h, 0.88 + fine * 0.08 - weather * 0.1 + pits * 0.05);
     });
   },
   plaster(tc, n, opt) {
@@ -367,6 +379,23 @@ const RECIPES = {
       tc.set(i, c, 0.5 + rivet * 0.4 - seam * 0.4 + brushed * 0.05, 0.45 + grime * 0.8 + brushed * 0.1, opt.metal ?? 0.85);
     });
   },
+  // painted steel drum: paint wear and chips, rust streaks running down, grime at the bottom (v = 0)
+  drum(tc, n) {
+    tc.each((u, v, i) => {
+      const big = n.fbm(u, v, 4, 5);
+      const fine = n.v(u * 256, v * 256, 256);
+      const chips = smooth(0.66, 0.74, n.fbm(u * 2, v, 8, 4));
+      const streak = smooth(0.55, 0.9, n.v(u * 40, v * 3, 40)) * smooth(0.4, 1.0, n.fbm(u, v * 0.3, 6, 3)) * 0.8;
+      const grime = smooth(0.3, 0.0, v) * 0.5 + smooth(0.85, 1.0, v) * 0.25;
+      const dent = n.fbm(u + 0.5, v, 3, 3);
+      const rust = Math.min(1, chips * 0.9 + streak * 0.6);
+      const paint = 0.82 + big * 0.18 + fine * 0.04;
+      const rc = [0.36, 0.2, 0.11].map((x) => x * (0.8 + fine * 0.5));
+      let c = [paint, paint, paint].map((x, k) => mix(x, rc[k] / 0.8, rust));
+      c = c.map((x) => x * (1 - grime));
+      tc.set(i, c, dent * 0.4 - chips * 0.15 + fine * 0.03, mix(0.45, 0.9, rust), mix(0.5, 0.15, rust));
+    });
+  },
   sandbag(tc, n) {
     tc.each((u, v, i) => {
       const b = blocks(u, v, 2, 4, 0.5);
@@ -392,34 +421,34 @@ const RECIPES = {
 
 // material name -> { recipe, opt, scale (m per repeat), normal strength, extra material params }
 export const MATERIAL_DEFS = {
-  sand: { r: 'sand', scale: 6, ns: 1.6 },
-  dirt: { r: 'dirt', scale: 5, ns: 4 },
-  grass: { r: 'dirt', scale: 5, ns: 4 },
-  sandstone: { r: 'stoneBlocks', opt: { color: 0xd1b084, color2: 0xbb9466, cols: 3, rows: 6 }, scale: 3, ns: 3.2 },
-  sandstoneDark: { r: 'stoneBlocks', opt: { color: 0xb08a60, color2: 0x96714b, cols: 2, rows: 5 }, scale: 3, ns: 3.2 },
+  sand: { r: 'sand', scale: 6, ns: 1.6, pom: 0.012 },
+  dirt: { r: 'dirt', scale: 5, ns: 4, pom: 0.015 },
+  grass: { r: 'dirt', scale: 5, ns: 4, pom: 0.015 },
+  sandstone: { r: 'stoneBlocks', opt: { color: 0xd1b084, color2: 0xbb9466, cols: 3, rows: 6 }, scale: 3, ns: 3.2, pom: 0.03 },
+  sandstoneDark: { r: 'stoneBlocks', opt: { color: 0xb08a60, color2: 0x96714b, cols: 2, rows: 5 }, scale: 3, ns: 3.2, pom: 0.03 },
   sandstoneLight: { r: 'plaster', opt: { color: 0xe0cda8 }, scale: 4, ns: 2.2 },
-  stoneTiles: { r: 'tiles', opt: { color: 0xb8a58a, color2: 0xa89478, grout: 0x6e6252, count: 4, rough: 0.8 }, scale: 3, ns: 5 },
-  tiles: { r: 'tiles', opt: { color: 0xc9c6bd, color2: 0x8f8c86, grout: 0x4d4b47, count: 6, checker: true, rough: 0.35 }, scale: 3, ns: 4 },
+  stoneTiles: { r: 'tiles', opt: { color: 0xb8a58a, color2: 0xa89478, grout: 0x6e6252, count: 4, rough: 0.8 }, scale: 3, ns: 5, pom: 0.012 },
+  tiles: { r: 'tiles', opt: { color: 0xc9c6bd, color2: 0x8f8c86, grout: 0x4d4b47, count: 6, checker: true, rough: 0.35 }, scale: 3, ns: 4, pom: 0.006 },
   plaster: { r: 'plaster', opt: { color: 0xd8d2c4 }, scale: 4, ns: 2.2 },
   plasterDark: { r: 'plaster', opt: { color: 0x8b867c }, scale: 4, ns: 3 },
   ceiling: { r: 'plaster', opt: { color: 0xe9e5dd }, scale: 6, ns: 0.9 },
-  brick: { r: 'brick', scale: 2.5, ns: 5 },
-  concrete: { r: 'concrete', opt: { color: 0xa3a39e, seams: true }, scale: 4, ns: 4 },
+  brick: { r: 'brick', scale: 2.5, ns: 5, pom: 0.022 },
+  concrete: { r: 'concrete', opt: { color: 0xa3a39e, seams: true }, scale: 4, ns: 4, pom: 0.008 },
   concreteDark: { r: 'concrete', opt: { color: 0x6c6c6a, seams: false }, scale: 4, ns: 4 },
-  asphalt: { r: 'asphalt', scale: 5, ns: 4 },
+  asphalt: { r: 'asphalt', scale: 5, ns: 4, pom: 0.006 },
   roof: { r: 'concrete', opt: { color: 0x7a7672 }, scale: 4, ns: 3 },
-  crate: { r: 'crate', opt: { color: 0xb88a55, dark: 0x6d4b2b }, scale: 0, ns: 5 },
-  crateDark: { r: 'crate', opt: { color: 0x6b7042, dark: 0x3b3e24, stencil: true }, scale: 0, ns: 5 },
-  wood: { r: 'planks', opt: { color: 0x9a7048, dark: 0x5a3c22, count: 8, seg: 2 }, scale: 2.5, ns: 4 },
-  woodPanel: { r: 'planks', opt: { color: 0xc49a66, dark: 0x8a6238, count: 6, vertical: true, seg: 1 }, scale: 2, ns: 4 },
+  crate: { r: 'crate', opt: { color: 0xb88a55, dark: 0x6d4b2b }, scale: 0, ns: 5, pom: 0.018 },
+  crateDark: { r: 'crate', opt: { color: 0x6b7042, dark: 0x3b3e24, stencil: true }, scale: 0, ns: 5, pom: 0.018 },
+  wood: { r: 'planks', opt: { color: 0x9a7048, dark: 0x5a3c22, count: 8, seg: 2 }, scale: 2.5, ns: 4, pom: 0.008 },
+  woodPanel: { r: 'planks', opt: { color: 0xc49a66, dark: 0x8a6238, count: 6, vertical: true, seg: 1 }, scale: 2, ns: 4, pom: 0.01 },
   metal: { r: 'metalPlate', opt: { color: 0x9aa0a6 }, scale: 2, ns: 3 },
   darkMetal: { r: 'metalPlate', opt: { color: 0x3a3e44, metal: 0.6 }, scale: 2, ns: 3 },
-  containerRed: { r: 'corrugated', opt: { color: 0x9c2f22 }, scale: 6, ns: 7 },
-  containerBlue: { r: 'corrugated', opt: { color: 0x245a8c }, scale: 6, ns: 7 },
-  containerGreen: { r: 'corrugated', opt: { color: 0x3d6b3a }, scale: 6, ns: 7 },
-  containerYellow: { r: 'corrugated', opt: { color: 0xc49a2a }, scale: 6, ns: 7 },
-  barrel: { r: 'corrugated', opt: { color: 0xc8c8c4 }, scale: 6, ns: 4 },
-  sandbag: { r: 'sandbag', scale: 2, ns: 5 },
+  containerRed: { r: 'corrugated', opt: { color: 0x9c2f22 }, scale: 6, ns: 7, pom: 0.03 },
+  containerBlue: { r: 'corrugated', opt: { color: 0x245a8c }, scale: 6, ns: 7, pom: 0.03 },
+  containerGreen: { r: 'corrugated', opt: { color: 0x3d6b3a }, scale: 6, ns: 7, pom: 0.03 },
+  containerYellow: { r: 'corrugated', opt: { color: 0xc49a2a }, scale: 6, ns: 7, pom: 0.03 },
+  barrel: { r: 'drum', scale: 0, ns: 3 },
+  sandbag: { r: 'sandbag', scale: 2, ns: 5, pom: 0.05 },
   lamp: { r: 'lamp', scale: 0, ns: 1 },
 };
 
@@ -450,7 +479,56 @@ function getMacroTex() {
   return macroTex;
 }
 
-export function addMacroVariation(m) {
+// Parallax occlusion mapping: march the view ray through the height field (roughness alpha) in
+// tangent space built from screen-space derivatives, then sample every map at the hit point.
+// Fades out with distance so only nearby surfaces pay for it.
+const POM_CODE = /* glsl */`
+vec2 pomUv = vMapUv;
+{
+  vec3 pV = normalize(vViewPosition);
+  vec3 pN = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+  vec3 dp1 = dFdx(-vViewPosition), dp2 = dFdy(-vViewPosition);
+  vec2 duv1 = dFdx(vMapUv), duv2 = dFdy(vMapUv);
+  vec3 dp2perp = cross(dp2, pN), dp1perp = cross(pN, dp1);
+  vec3 pT = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 pB = dp2perp * duv1.y + dp1perp * duv2.y;
+  float pInv = inversesqrt(max(max(dot(pT, pT), dot(pB, pB)), 1e-24));
+  pT *= pInv; pB *= pInv;
+  vec3 vt = vec3(dot(pV, pT), dot(pV, pB), dot(pV, pN));
+  float pFade = 1.0 - smoothstep(10.0, 22.0, length(vViewPosition));
+  if (pFade > 0.01 && vt.z > 0.05) {
+    float steps = floor(mix(28.0, 8.0, clamp(vt.z, 0.0, 1.0)));
+    float layer = 1.0 / steps;
+    vec2 delta = vt.xy / max(vt.z, 0.25) * uPomScale * pFade * layer;
+    vec2 uv = vMapUv;
+    float cur = 0.0;
+    float depth = 1.0 - textureGrad(roughnessMap, uv, duv1, duv2).a;
+    for (int i = 0; i < 28; i++) {
+      if (cur >= depth) break;
+      uv -= delta;
+      depth = 1.0 - textureGrad(roughnessMap, uv, duv1, duv2).a;
+      cur += layer;
+    }
+    vec2 prev = uv + delta;
+    float after = depth - cur;
+    float before = (1.0 - textureGrad(roughnessMap, prev, duv1, duv2).a) - cur + layer;
+    pomUv = mix(uv, prev, clamp(after / (after - before + 1e-5), 0.0, 1.0));
+  }
+}
+`;
+
+function pomPatch(sh, scale) {
+  sh.uniforms.uPomScale = { value: scale };
+  const chunk = (name, from) => THREE.ShaderChunk[name].split(from).join('pomUv');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float uPomScale;')
+    .replace('#include <map_fragment>', POM_CODE + chunk('map_fragment', 'vMapUv'))
+    .replace('#include <roughnessmap_fragment>', chunk('roughnessmap_fragment', 'vRoughnessMapUv'))
+    .replace('#include <metalnessmap_fragment>', chunk('metalnessmap_fragment', 'vMetalnessMapUv'))
+    .replace('#include <normal_fragment_maps>', chunk('normal_fragment_maps', 'vNormalMapUv'));
+}
+
+export function addMacroVariation(m, pomScale = 0) {
   const tex = getMacroTex();
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uMacroTex = { value: tex };
@@ -473,8 +551,29 @@ export function addMacroVariation(m) {
         diffuseColor.rgb *= mix(0.8, 1.14, macroN1) * mix(0.92, 1.06, macroN2);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
         roughnessFactor = clamp(roughnessFactor * mix(0.86, 1.1, macroN2), 0.04, 1.0);`);
+    if (pomScale) pomPatch(sh, pomScale);
+    specOcclusion(sh);
   };
-  m.customProgramCacheKey = () => 'macro-variation';
+  m.customProgramCacheKey = () => (pomScale ? 'macro-variation-pom' : 'macro-variation');
+}
+
+function addPom(m, pomScale) {
+  m.onBeforeCompile = (sh) => { pomPatch(sh, pomScale); specOcclusion(sh); };
+  m.customProgramCacheKey = () => 'pom';
+}
+
+// The baked vertex colour is an ambient-occlusion term (interiors, wall bases); apply it to the sky
+// reflections too so glossy floors indoors don't mirror a bright sky.
+function specOcclusion(sh) {
+  sh.fragmentShader = sh.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
+    #ifdef USE_COLOR
+      reflectedLight.indirectSpecular *= mix(1.0, smoothstep(0.35, 1.0, vColor.g), 0.85);
+    #endif`);
+}
+
+function addSpecOcclusion(m) {
+  m.onBeforeCompile = (sh) => specOcclusion(sh);
+  m.customProgramCacheKey = () => 'spec-occlusion';
 }
 
 export class TextureLibrary {
@@ -519,7 +618,11 @@ export class TextureLibrary {
       m.emissiveIntensity = 3.5;
     }
     m.userData.scale = d.scale ?? 3;
-    if ((d.scale ?? 3) >= 2 && this.size >= 512) addMacroVariation(m);
+    // parallax depth only on Ultra (the M-series Pro/Max and RTX preset)
+    const pom = this.size >= 1024 && d.pom ? d.pom / (d.scale || 1) : 0;
+    if ((d.scale ?? 3) >= 2 && this.size >= 512) addMacroVariation(m, pom);
+    else if (pom) addPom(m, pom);
+    else addSpecOcclusion(m);
     this.materials.set(name, m);
     return m;
   }
