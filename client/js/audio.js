@@ -432,6 +432,24 @@ export class AudioEngine {
     this.track(0.15);
   }
 
+  // spent brass hitting the floor
+  casing(pos, big = false) {
+    if (!this.ok() || this.dist(pos) > 14) return;
+    const t = this.now;
+    const out = this.out(pos, { ref: 1, rolloff: 2 });
+    out.gain.value = big ? 0.22 : 0.16;
+    if (big) {
+      this.burst(out, t, { type: 'bandpass', freq: 900, q: 3, peak: 0.5, decay: 0.05 });
+      this.burst(out, t + 0.09, { type: 'bandpass', freq: 800, q: 3, peak: 0.25, decay: 0.04 });
+    } else {
+      const f = 3400 + Math.random() * 1800;
+      this.tone(out, t, { type: 'sine', freq: f, peak: 0.3, decay: 0.08 });
+      this.tone(out, t + 0.06 + Math.random() * 0.04, { type: 'sine', freq: f * 1.12, peak: 0.14, decay: 0.06 });
+      this.burst(out, t, { type: 'highpass', freq: 5000, q: 1, peak: 0.25, decay: 0.02 });
+    }
+    this.track(0.25);
+  }
+
   pinPull() {
     if (!this.ok()) return;
     const t = this.now, out = this.out(null);

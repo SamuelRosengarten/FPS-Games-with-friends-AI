@@ -20,6 +20,7 @@ import { Radar, esc } from './hud.js';
 
 const SURFACE_IDX = { stone: 0, wood: 1, metal: 2, sand: 3 };
 const tmpV = new THREE.Vector3();
+const tmpV2 = new THREE.Vector3();
 
 function fmtTime(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -64,6 +65,9 @@ export class ClientGame {
     this.decor = new Decor(this.g, this.tex, this.map);
     console.info(`[breachpoint] textures ${Math.round(t1 - t0)} ms, env ${Math.round(tEnv - t1)} ms, world ${Math.round(t2 - tEnv)} ms, decor ${Math.round(performance.now() - t2)} ms (${mats.length} materials, ${this.g.quality}) ${JSON.stringify(this.decor.timings)}`);
     this.effects = new Effects(this.g);
+    this.effects.setWorld(this.world);
+    this.effects.setAmbient(this.map.theme.motes);
+    this.effects.onCasingBounce = (p, big) => this.audio.casing(p, big);
     this.viewmodel = this.viewmodel || new ViewModel(this.g);
     this.viewmodel.setVisible(true);
     this.radar = new Radar(document.getElementById('radar'), this.map);
@@ -322,8 +326,25 @@ export class ClientGame {
   onHit(m) {
     this.hud.hitmarker(m.hs, m.kill);
     this.audio.hitmarker(m.hs, m.kill, m.armor);
-    if (m.p) this.effects.blood(m.p, [0, 0, 0]);
+    if (m.p) {
+      this.effects.blood(m.p, [0, 0, 0]);
+      const eye = eyePosition(this.me);
+      this.bloodSplatter(m.p, [m.p[0] - eye[0], m.p[1] - eye[1], m.p[2] - eye[2]]);
+    }
     if (m.kill) this.input.rumble(0.3, 0.6, 120);
+  }
+
+  // Blood on the wall (or floor) behind a hit, along the bullet's direction.
+  bloodSplatter(p, dir) {
+    const L = Math.hypot(dir[0], dir[1], dir[2]);
+    if (L < 1e-3) return;
+    const dx = dir[0] / L, dy = dir[1] / L - 0.25, dz = dir[2] / L;
+    const n = Math.hypot(dx, dy, dz);
+    const h = this.world.raycast(p[0], p[1], p[2], dx / n, dy / n, dz / n, 2.6);
+    if (h) {
+      const t = h.t;
+      this.effects.bloodDecal([p[0] + dx / n * t, p[1] + dy / n * t, p[2] + dz / n * t], h.n, 0.35 + (2.6 - t) * 0.12);
+    }
   }
 
   onDamage(m) {
@@ -364,6 +385,10 @@ export class ClientGame {
       const vp = rp.state;
       if (kp && vp && m.k !== m.v && Math.hypot(vp.x - kp.x, vp.z - kp.z) > 0.1) rp.model.die(vp.x - kp.x, vp.z - kp.z);
       else rp.model.die(Math.random() < 0.5 ? 1 : -1);
+      if (vp && m.w !== 'suicide' && m.w !== 'fall') {
+        const fy = this.world.groundBelow(vp.x, vp.y + 0.3, vp.z, 2);
+        setTimeout(() => this.active && this.effects.bloodDecal([vp.x, fy, vp.z], [0, 1, 0], 0.9), 450);
+      }
     }
     if (m.v === this.myId) {
       this.me.alive = false;
@@ -957,6 +982,15 @@ export class ClientGame {
     this.viewmodel.fire(wd.type === 'sniper' || wd.type === 'shotgun' ? 1.6 : wd.type === 'pistol' ? 1.1 : 1);
     this.audio.gunshot(wd.id, null, true);
     this.effects.flashLight([muzzle.x, muzzle.y, muzzle.z], 0xffb060, 8, 0.05, 7);
+    this.effects.muzzleSmoke([muzzle.x, muzzle.y, muzzle.z], base, wd.type === 'shotgun' || wd.type === 'sniper' ? 1.6 : 1);
+    {
+      // brass flies out to the right of the view
+      const q = this.g.camera.quaternion;
+      const ep = tmpV.set(0.1, -0.08, -0.3).applyQuaternion(q).add(this.g.camera.position);
+      const right = tmpV2.set(1, 0, 0).applyQuaternion(q);
+      const out = 1.6 + Math.random() * 0.8, up = 1.5 + Math.random() * 0.8;
+      this.effects.casing([ep.x, ep.y, ep.z], [right.x * out + me.vx, up + right.y * out, right.z * out + me.vz], wd.type === 'shotgun');
+    }
     this.input.rumble(wd.type === 'sniper' || wd.type === 'shotgun' ? 0.8 : 0.25, 0.4, 60);
     if (wd.type === 'shotgun') setTimeout(() => this.viewmodel.play('pump', 0.45), 250);
     if (wd.type === 'sniper') {
@@ -1073,11 +1107,24 @@ export class ClientGame {
     } else from = new THREE.Vector3(m.o[0], m.o[1], m.o[2]);
     this.effects.muzzleFlash(from, wd?.type === 'sniper' || wd?.type === 'shotgun');
     this.audio.gunshot(m.w, [m.o[0], m.o[1], m.o[2]], false);
+    if (rp && rp.model.root.visible && rp.model.weapon && wd?.type !== 'knife') {
+      const w = rp.model.weapon;
+      const ej = w.userData.eject;
+      if (ej && from.distanceToSquared(this.g.camera.position) < 900) {
+        const p = w.localToWorld(tmpV.set(ej[0], ej[1], ej[2]));
+        const yaw = rp.state.yaw;
+        const out = 1.4 + Math.random();
+        this.effects.casing([p.x, p.y, p.z], [Math.cos(yaw) * out, 1.6 + Math.random(), -Math.sin(yaw) * out], wd.type === 'shotgun');
+      }
+    }
     const eye = eyePosition(this.me);
     for (const e of m.e) {
       const [x, y, z, nx, ny, nz, surf] = e;
       if (surf !== 4) this.effects.impact([x, y, z], [nx, ny, nz], surf, true);
-      else this.effects.blood([x, y, z], [nx, ny, nz]);
+      else {
+        this.effects.blood([x, y, z], [nx, ny, nz]);
+        this.bloodSplatter([x, y, z], [x - m.o[0], y - m.o[1], z - m.o[2]]);
+      }
       this.effects.tracer([from.x, from.y, from.z], [x, y, z], m.e.length > 1 ? 0.3 : wd?.auto ? 0.6 : 1);
       // bullet whiz near our head
       if (this.me.alive) {

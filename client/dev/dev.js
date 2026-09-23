@@ -10,6 +10,7 @@ import { TextureLibrary } from '../js/textures.js';
 import { WorldView } from '../js/world.js';
 import { Effects } from '../js/effects.js';
 import { Decor } from '../js/decor.js';
+import { PhysicsWorld } from '../shared/physics.js';
 
 const q = new URLSearchParams(location.search);
 const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false };
@@ -53,6 +54,29 @@ if (view === 'vm') {
     m.update({ x: p[0], y: p[1], z: p[2], yaw: p[3], pitch: 0, crouch: 0, lean: 0, speed: 0, onGround: true }, 0.016);
     g.scene.add(m.root);
   });
+  if (q.get('fx')) {
+    // effects test: explosion ahead, impacts + blood on the nearest wall, casings, muzzle smoke
+    const fx = new Effects(g);
+    const world = new PhysicsWorld(map.boxes, map.bounds);
+    fx.setWorld(world);
+    fx.setAmbient(map.theme.motes);
+    const yaw = cam[3], dx = -Math.sin(yaw), dz = -Math.cos(yaw);
+    const ex = [cam[0] + dx * 7, world.groundBelow(cam[0] + dx * 7, 3, cam[2] + dz * 7, 5) + 0.1, cam[2] + dz * 7];
+    const which = q.get('fx');
+    if (which.includes('e')) fx.explosion(ex, true);
+    if (which.includes('s')) fx.addSmoke(1, [ex[0] + 3, ex[1], ex[2]], performance.now() - 3000, performance.now() + 20000, performance.now(), 0.85);
+    const h = world.raycast(cam[0], cam[1], cam[2], dx, -0.05, dz, 40);
+    if (h && which.includes('i')) {
+      for (let i = 0; i < 12; i++) {
+        const p = [cam[0] + dx * h.t + (Math.random() - 0.5) * 1.5 * Math.abs(dz), cam[1] - 0.05 * h.t + (Math.random() - 0.5), cam[2] + dz * h.t + (Math.random() - 0.5) * 1.5 * Math.abs(dx)];
+        fx.impact(p, h.n, i % 3, true);
+      }
+      fx.bloodDecal([cam[0] + dx * h.t, cam[1] - 0.05 * h.t + 0.4, cam[2] + dz * h.t], h.n, 0.7);
+      fx.bloodDecal([cam[0] + dx * (h.t - 1.5), world.groundBelow(cam[0] + dx * (h.t - 1.5), 2, cam[2] + dz * (h.t - 1.5)), cam[2] + dz * (h.t - 1.5)], [0, 1, 0], 1);
+    }
+    if (which.includes('c')) for (let i = 0; i < 8; i++) fx.casing([cam[0] + dx * 1.2 + 0.3, cam[1] - 0.2, cam[2] + dz * 1.2], [Math.cos(yaw) * 1.5 + (Math.random() - 0.5), 1.5, -Math.sin(yaw) * 1.5], i % 4 === 0);
+    window.__fx = fx;
+  }
   if (q.get('smoke')) {
     const fx = new Effects(g);
     fx.addSmoke(1, [cam[0] - Math.sin(cam[3]) * 8, 0, cam[2] - Math.cos(cam[3]) * 8], performance.now() - 3000, performance.now() + 20000, performance.now(), 0.85);

@@ -17,6 +17,7 @@ export default {
     raised: 'stoneTiles', crate: 'crate', crate2: 'crateDark', low: 'sandbag', roof: 'wood', destructible: 'woodPanel',
   },
   theme: {
+    motes: { color: 0xffe2b0, alpha: 0.55, count: 600 },
     grade: { gain: [1.05, 1.0, 0.92], lift: [0.015, 0.01, 0.0], contrast: 1.1, saturation: 1.1, vignette: 0.3, grain: 0.02 },
     cloudCover: 0.32, cloudColor: 0xffffff,
     sky: { turbidity: 2.2, rayleigh: 1.1, mie: 0.0035, mieG: 0.86 },

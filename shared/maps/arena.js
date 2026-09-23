@@ -23,6 +23,7 @@ export default {
     raised: 'concrete', crate: 'crate', crate2: 'crateDark', low: 'sandbag', roof: 'concreteDark', destructible: 'woodPanel',
   },
   theme: {
+    motes: { color: 0xffb070, alpha: 0.5, count: 450, size: 0.014 },
     grade: { gain: [1.02, 0.99, 1.0], lift: [0.025, 0.01, 0.035], contrast: 1.08, saturation: 0.96, vignette: 0.34, grain: 0.025 },
     cloudCover: 0.45, cloudColor: 0xffb48a,
     sky: { turbidity: 4, rayleigh: 2.8, mie: 0.005, mieG: 0.85 },
