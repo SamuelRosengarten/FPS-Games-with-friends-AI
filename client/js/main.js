@@ -21,6 +21,7 @@ try {
 }
 const input = new Input(settings, graphics.canvas);
 const audio = new AudioEngine(settings);
+audio.bodycamMic = settings.viewStyle === 'bodycam'; // applied when the audio context starts
 const hud = new HUD(settings);
 const ui = new UI(settings, input, audio);
 const net = new Net();
@@ -172,7 +173,8 @@ ui.on('fullscreen', () => toggleFullscreen());
 ui.on('gpuInfo', () => graphics.gpu);
 ui.on('qualityInfo', () => `Using: ${graphics.quality.toUpperCase()}`);
 ui.on('settings', (key) => {
-  if (['quality', 'aa', 'volumetrics', 'reflections', 'eyeAdaptation', 'all'].includes(key)) graphics.applyQuality();
+  if (['quality', 'aa', 'volumetrics', 'reflections', 'eyeAdaptation', 'motionBlur', 'all'].includes(key)) graphics.applyQuality();
+  if (['viewStyle', 'all'].includes(key)) { graphics.setViewStyle(settings.viewStyle); audio.setBodycam(settings.viewStyle === 'bodycam'); }
   if (['maxRenderScale', 'dynamicRes', 'upscaling'].includes(key)) { graphics.renderScale = graphics.initialScale(); graphics.resize(); }
   if (['sharpness', 'all'].includes(key)) graphics.applySharpness();
   if (['volume', 'sfxVolume', 'uiVolume', 'all'].includes(key)) audio.applyVolume();

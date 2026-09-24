@@ -24,6 +24,8 @@ export const DEFAULTS = {
   viewmodelFov: 68,
   bob: 1,
   aimStyle: 'cs',        // cs: zoom keeps the gun at the side (like CS2) | ads: aim down the sights
+  viewStyle: 'standard',  // standard | bodycam (fisheye body-worn camera, like the game "Bodycam")
+  bodycamCrosshair: false,
   vmX: 0,                // weapon position offsets in cm (like viewmodel_offset_x / _y)
   vmY: 0,
   // controller
@@ -46,6 +48,7 @@ export const DEFAULTS = {
   volumetrics: true,     // volumetric sunlight (Ultra / Epic)
   reflections: true,     // screen-space reflections (Epic)
   eyeAdaptation: true,   // auto exposure (High and up)
+  motionBlur: false,     // camera motion blur (always on in the BodyCam view)
   dynamicRes: true,
   maxRenderScale: 1.0,
   showFps: false,

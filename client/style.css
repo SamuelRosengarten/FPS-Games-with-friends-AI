@@ -357,3 +357,12 @@ table.sb .icons { font-size: 11px; color: var(--dim); margin-left: 6px; }
   .lobby-body { flex-direction: column; overflow-y: auto; }
   .lobby-side { max-width: none; }
 }
+
+/* BodyCam view: device timestamp overlay */
+#bodycam-osd { position: absolute; top: 3vh; right: 3vw; text-align: right; font: 700 clamp(12px, 1.3vw, 20px)/1.3 "Courier New", ui-monospace, monospace;
+  color: rgba(246, 246, 240, 0.93); letter-spacing: 0.06em; text-shadow: 0 0 2px #000, 1px 1px 0 rgba(0,0,0,0.7); }
+#bodycam-osd .rec { color: #ff5a4a; font-size: 0.85em; }
+#bodycam-osd .rec i { display: inline-block; width: 0.6em; height: 0.6em; border-radius: 50%; background: #ff3b30; margin-right: 0.45em; animation: bcrec 1s steps(2, start) infinite; }
+@keyframes bcrec { to { visibility: hidden; } }
+body.bodycam #killfeed { top: calc(3vh + 5.2em); }
+body.bodycam #fps { top: calc(3vh + 9em); }

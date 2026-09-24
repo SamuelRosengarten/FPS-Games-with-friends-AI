@@ -362,7 +362,8 @@ export class ViewModel {
     let py = hip[1] + (adsPos[1] - hip[1]) * ads + by + breathe - this.landDip + this.sway.y * 0.25 * (1 - ads * 0.7);
     let pz = hip[2] + (adsPos[2] - hip[2]) * ads + this.kick * (1 - ads * 0.4);
     let rx = this.kickRot * 0.09 + this.sway.y * 0.6 * (1 - ads * 0.6);
-    let ry = this.sway.x * 1.0 * (1 - ads * 0.6) + (BASE_YAW[kind] || 0) * yawK;
+    // BodyCam: held low and near the centre, so the barrel needs less angle to point at the middle
+    let ry = this.sway.x * 1.0 * (1 - ads * 0.6) + (BASE_YAW[kind] || 0) * yawK * (st.bodycam ? 0.45 : 1);
     let rz = this.sway.x * 0.6 - (st.crouch || 0) * 0.04 * (1 - ads) + bx * 1.2;
 
     // deploy

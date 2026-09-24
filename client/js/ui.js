@@ -256,6 +256,9 @@ export class UI {
         slider('fov', 'Field of view', 70, 120, 1, (v) => `${v}°`, 'Horizontal at 16:9');
         slider('viewmodelFov', 'Weapon FOV', 50, 90, 1, (v) => `${v}°`);
         slider('bob', 'View bob', 0, 1.5, 0.05, (v) => (+v).toFixed(2));
+        select('viewStyle', 'Camera style', [['standard', 'Standard'], ['bodycam', 'BodyCam (body-worn camera)']],
+          'BodyCam: fisheye chest camera with sensor noise, motion blur and a timestamp, like the game "Bodycam"');
+        check('bodycamCrosshair', 'Crosshair in BodyCam view', 'Real body cameras have none');
         select('aimStyle', 'Right-click aim', [['cs', 'Zoom, gun stays on the side (CS2)'], ['ads', 'Aim down the sights']], 'Snipers always use the scope');
         slider('vmX', 'Weapon position: sideways', -4, 4, 0.5, (v) => `${v > 0 ? '+' : ''}${v} cm`, 'Positive moves the gun further right');
         slider('vmY', 'Weapon position: height', -4, 4, 0.5, (v) => `${v > 0 ? '+' : ''}${v} cm`, 'Negative moves the gun lower');
@@ -271,6 +274,7 @@ export class UI {
         slider('sharpness', 'Sharpness', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
         check('volumetrics', 'Volumetric lighting', 'Light shafts and sun haze (Ultra / Epic with temporal AA)');
         check('reflections', 'Screen-space reflections', 'Reflections on puddles, water and glossy floors (Epic with temporal AA)');
+        check('motionBlur', 'Motion blur', 'Blur when turning the camera (always on in the BodyCam view)');
         check('eyeAdaptation', 'Eye adaptation', 'Exposure adjusts between bright outdoors and dark interiors (High and up)');
         check('dynamicRes', 'Dynamic resolution', 'Lowers render resolution on the fly to stay above 60 FPS');
         slider('maxRenderScale', 'Max render scale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
