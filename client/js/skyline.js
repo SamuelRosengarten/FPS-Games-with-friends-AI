@@ -237,45 +237,83 @@ export class Skyline {
 
   // A ring of terrain between radii rIn..rOut around the map centre. heightAt(angle) gives the peak
   // height, profile the cross-section [[radialT, heightFrac], ...], colorAt(y, h, angle) the colour.
-  ring(rIn, rOut, heightAt, profile, colorAt, seg = 160) {
-    const P = this.terrain;
-    const pts = (a) => profile.map(([t, f]) => {
-      const rr = rIn + (rOut - rIn) * t;
-      const h = heightAt(a) * f;
-      // a rounded rectangle (superellipse) around the map so the gap is similar on all sides
-      const o = rr - this.R0, c = Math.cos(a), s = Math.sin(a);
-      return [this.cx + Math.sign(c) * Math.abs(c) ** (1 / 3) * (this.hw + o), h, this.cz + Math.sign(s) * Math.abs(s) ** (1 / 3) * (this.hd + o), heightAt(a)];
-    });
-    let prev = pts(0);
-    for (let s = 1; s <= seg; s++) {
-      const a1 = (s / seg) * Math.PI * 2;
-      const cur = pts(a1);
-      const a0 = ((s - 1) / seg) * Math.PI * 2;
-      for (let k = 0; k < profile.length - 1; k++) {
-        const quad = [prev[k], cur[k], cur[k + 1], prev[k + 1]];
-        const angs = [a0, a1, a1, a0];
-        // two triangles facing inward/upward (towards the map)
-        for (const tri of [[0, 1, 2], [0, 2, 3]]) {
-          const A = quad[tri[0]], B = quad[tri[1]], C = quad[tri[2]];
-          const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2];
-          const vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
-          let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-          const l = Math.hypot(nx, ny, nz) || 1;
-          nx /= l; ny /= l; nz /= l;
-          // soften: blend the facet normal with straight up so slopes don't look faceted
-          const bx = nx * 0.75, by = ny * 0.75 + 0.25, bz = nz * 0.75;
-          const bl = Math.hypot(bx, by, bz) || 1;
-          for (const j of tri) {
-            const V = quad[j];
-            P.pos.push(V[0], V[1] - 0.6, V[2]);
-            P.nor.push(bx / bl, by / bl, bz / bl);
-            const c = colorAt(V[1], V[3], angs[j]);
-            P.col.push(c.r, c.g, c.b);
-            P.uv.push(PLAIN, PLAIN);
-          }
-        }
+  ring(rIn, rOut, heightAt, profile, colorAt, seg = 220, o = {}) {
+    const T = this.terrain;
+    // refine the cross-section so slopes are smooth
+    const prof = [];
+    for (let k = 0; k < profile.length - 1; k++) {
+      const [t0, f0] = profile[k], [t1, f1] = profile[k + 1];
+      for (let j = 0; j < 3; j++) {
+        const u = j / 3, s2 = u * u * (3 - 2 * u);
+        prof.push([t0 + (t1 - t0) * u, f0 + (f1 - f0) * s2]);
       }
-      prev = cur;
+    }
+    prof.push(profile[profile.length - 1]);
+    const K = prof.length;
+    const place = (a, rr) => {
+      // a rounded rectangle (superellipse) around the map so the gap is similar on all sides
+      const off = rr - this.R0, c = Math.cos(a), sn = Math.sin(a);
+      return [this.cx + Math.sign(c) * Math.abs(c) ** (1 / 3) * (this.hw + off), this.cz + Math.sign(sn) * Math.abs(sn) ** (1 / 3) * (this.hd + off)];
+    };
+    const G = [];
+    for (let si = 0; si <= seg; si++) {
+      const a = (si / seg) * Math.PI * 2;
+      const row = [];
+      for (let k = 0; k < K; k++) {
+        const [t, fr] = prof[k];
+        // ridges wander a little from ring to ring
+        const peak = heightAt(a + (t - 0.5) * 0.08);
+        const rr = rIn + (rOut - rIn) * t;
+        const [x, z] = place(a, rr);
+        row.push({ x, y: peak * fr - 0.6, z, peak, a, t });
+      }
+      G.push(row);
+    }
+    // smooth normals from the grid (facing the map)
+    const N = G.map((row, si) => row.map((v, k) => {
+      const sA = G[(si - 1 + seg) % seg][k], sB = G[(si + 1) % seg][k];
+      const kA = row[Math.max(0, k - 1)], kB = row[Math.min(K - 1, k + 1)];
+      const ax = sB.x - sA.x, ay = sB.y - sA.y, az = sB.z - sA.z;
+      const bx = kB.x - kA.x, by = kB.y - kA.y, bz = kB.z - kA.z;
+      let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+      if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      const l = Math.hypot(nx, ny, nz) || 1;
+      return [nx / l, ny / l, nz / l];
+    }));
+    const patch = angNoise(o.seed ?? 7, 97), patch2 = angNoise((o.seed ?? 7) + 5, 31);
+    const col = (v, n) => {
+      const c = colorAt(v.y + 0.6, v.peak, v.a).clone();
+      // vegetation patches and bare, lighter rock on steep slopes
+      const pv = 0.78 + patch(v.a * 3 + v.t * 2.1) * 0.3 + patch2(v.a + v.t) * 0.12;
+      c.multiplyScalar(pv);
+      if (o.rock) c.lerp(o.rock, Math.max(0, Math.min(1, (0.8 - n[1]) * 2.2)) * 0.6);
+      return c;
+    };
+    const emit = (v, n) => {
+      T.pos.push(v.x, v.y, v.z);
+      T.nor.push(n[0], n[1], n[2]);
+      const c = col(v, n);
+      T.col.push(c.r, c.g, c.b);
+      T.uv.push(PLAIN, PLAIN);
+    };
+    for (let si = 0; si < seg; si++) {
+      for (let k = 0; k < K - 1; k++) {
+        const a = [G[si][k], N[si][k]], b = [G[si + 1][k], N[(si + 1) % seg][k]];
+        const c = [G[si + 1][k + 1], N[(si + 1) % seg][k + 1]], d = [G[si][k + 1], N[si][k + 1]];
+        for (const [p1, p2, p3] of [[a, b, c], [a, c, d]]) { emit(...p1); emit(...p2); emit(...p3); }
+      }
+    }
+    // trees scattered on the slopes facing the map
+    if (o.trees) {
+      const r = rng((o.seed ?? 7) * 31 + 3);
+      for (let i = 0; i < o.trees.count; i++) {
+        const si = Math.floor(r() * seg), k = 1 + Math.floor(r() * (K * (o.trees.upTo ?? 0.55)));
+        const v = G[si][Math.min(K - 1, k)], n = N[si][Math.min(K - 1, k)];
+        if (n[1] < 0.55) continue;
+        const h = o.trees.h[0] + r() * (o.trees.h[1] - o.trees.h[0]);
+        const tc = new THREE.Color(o.trees.color).multiplyScalar(0.8 + r() * 0.35);
+        this.solid.cyl(0.05, h * 0.28, h, v.x + (r() - 0.5) * 4, v.y + 0.3, v.z + (r() - 0.5) * 4, tc, 6);
+      }
     }
   }
 
@@ -321,7 +359,7 @@ export class Skyline {
     const sand = new THREE.Color(0xd9bf8e), sandDark = new THREE.Color(0xb99a6c);
     this.ring(this.R0 + 70, this.R0 + 70 + F * 0.28, (a) => 5 + dn(a) * 9 + dn2(a) * 3,
       [[0, 0], [0.35, 0.7], [0.55, 1], [0.8, 0.65], [1, 0.4]],
-      (y, h) => tmpC.copy(sandDark).lerp(sand, Math.min(1, y / Math.max(1, h))));
+      (y, h) => tmpC.copy(sandDark).lerp(sand, Math.min(1, y / Math.max(1, h))), 220, { seed: 3 });
     const mn = angNoise(21, 14), mn2 = angNoise(33, 47);
     const rock = new THREE.Color(0xb06f48), rockLight = new THREE.Color(0xd09a6c), rockDark = new THREE.Color(0x8a5238);
     this.ring(F * 0.55, F * 0.9, (a) => {
@@ -332,7 +370,7 @@ export class Skyline {
     (y) => {
       const band = Math.sin(y * 0.55) * 0.5 + 0.5;
       return tmpC.copy(rockDark).lerp(y > 30 ? rockLight : rock, Math.min(1, y / 18)).lerp(rockLight, band * 0.18);
-    });
+    }, 220, { seed: 5, trees: { count: 90, color: 0x6a6a3a, h: [2, 4], upTo: 0.25 } });
   }
 
   industrial() {
@@ -417,10 +455,11 @@ export class Skyline {
     }
     // low scrubby hills
     const hn = angNoise(71, 18), hn2 = angNoise(73, 53);
-    const grass = new THREE.Color(0x77805a), dirt = new THREE.Color(0x6d6552), grassLight = new THREE.Color(0x8e9a66);
-    this.ring(F * 0.5, F * 0.92, (a) => 20 + hn(a) * 40 + hn2(a) * 10,
+    const grass = new THREE.Color(0x5b6641), dirt = new THREE.Color(0x5a5446), grassLight = new THREE.Color(0x717d52);
+    this.ring(F * 0.5, F * 0.92, (a) => 18 + hn(a) * 34 + hn2(a) * 10,
       [[0, 0], [0.3, 0.55], [0.6, 1], [1, 0.85]],
-      (y, h) => tmpC.copy(dirt).lerp(grass, Math.min(1, y / 10)).lerp(grassLight, Math.max(0, (y - h * 0.6) / Math.max(1, h * 0.4)) * 0.5));
+      (y, h) => tmpC.copy(dirt).lerp(grass, Math.min(1, y / 10)).lerp(grassLight, Math.max(0, (y - h * 0.6) / Math.max(1, h * 0.4)) * 0.5),
+      220, { seed: 11, rock: new THREE.Color(0x7d786c), trees: { count: 320, color: 0x34422a, h: [6, 11] } });
   }
 
   city() {
@@ -444,10 +483,11 @@ export class Skyline {
       }
     }
     const hn = angNoise(81, 16), hn2 = angNoise(83, 41);
-    const far = new THREE.Color(0x7b8a74), farLight = new THREE.Color(0x98a38a);
+    const far = new THREE.Color(0x66755f), farLight = new THREE.Color(0x839077);
     this.ring(F * 0.62, F * 0.97, (a) => 22 + hn(a) * 45 + hn2(a) * 12,
       [[0, 0], [0.4, 0.6], [0.7, 1], [1, 0.9]],
-      (y, h) => tmpC.copy(far).lerp(farLight, Math.min(1, y / Math.max(1, h))));
+      (y, h) => tmpC.copy(far).lerp(farLight, Math.min(1, y / Math.max(1, h))),
+      220, { seed: 13, rock: new THREE.Color(0x857f74), trees: { count: 260, color: 0x3a4a30, h: [7, 12] } });
   }
 
   hills() {
@@ -485,7 +525,8 @@ export class Skyline {
     const grass = new THREE.Color(0x4c6236), grassLight = new THREE.Color(0x6f7f45), rock = new THREE.Color(0x6b6258);
     this.ring(F * 0.5, F * 0.92, (a) => 18 + hn(a) * 42 + hn2(a) * 10,
       [[0, 0], [0.35, 0.6], [0.65, 1], [1, 0.8]],
-      (y, h) => tmpC.copy(grass).lerp(grassLight, Math.min(1, y / 20)).lerp(rock, Math.max(0, (y - 35) / 25)));
+      (y, h) => tmpC.copy(grass).lerp(grassLight, Math.min(1, y / 20)).lerp(rock, Math.max(0, (y - 35) / 25)),
+      220, { seed: 17, rock: new THREE.Color(0x6b6258), trees: { count: 420, color: 0x2c4026, h: [7, 13], upTo: 0.7 } });
   }
 
   // --------------------------------------------------------------- meshes

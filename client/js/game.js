@@ -64,6 +64,7 @@ export class ClientGame {
     this.worldView = new WorldView(this.g, this.tex, this.map);
     const t2 = performance.now();
     this.decor = new Decor(this.g, this.tex, this.map);
+    this.g.captureEnvironment(this.map, [this.decor.skyline?.group]);
     console.info(`[breachpoint] textures ${Math.round(t1 - t0)} ms, env ${Math.round(tEnv - t1)} ms, world ${Math.round(t2 - tEnv)} ms, decor ${Math.round(performance.now() - t2)} ms (${mats.length} materials, ${this.g.quality}) ${JSON.stringify(this.decor.timings)}`);
     this.effects = new Effects(this.g);
     this.effects.setWorld(this.world);

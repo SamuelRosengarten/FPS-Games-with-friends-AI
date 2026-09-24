@@ -22,7 +22,9 @@ with **keyboard & mouse or a controller**.
   ballistic glasses, balaclavas and shemaghs, plate carriers with magazine / radio / admin pouches, battle belts,
   holsters, knee and elbow pads, gloves and boots — with camouflage, fabric weave, MOLLE webbing, skin, leather and
   rubber surface detail (Attackers in desert multicam, Defenders in navy)
-- **High-end graphics** (Ultra preset for M-series Pro/Max and RTX GPUs): 4K shadow maps, ambient occlusion (GTAO), bloom,
+- **High-end graphics** (Ultra preset for M-series Pro/Max and RTX GPUs): 4K contact-hardening soft shadows (sharp at the
+  base, softer further from the caster), ambient light and reflections captured from each map (sunlit sand and walls
+  bounce warm light), aerial perspective (haze that glows towards the sun and thins with altitude), ambient occlusion (GTAO), bloom,
   4× MSAA, physically based materials, sky lighting, per-map colour grading, a distant skyline around every map (desert town
   with mesas, factories with smoking stacks, a city of towers, forested hills), detailed map dressing (windows, palms and
   grass swaying in the wind, waving flags, a fountain, rooftop clutter, AC units, pipes, wires, graffiti, puddles, rocks,
