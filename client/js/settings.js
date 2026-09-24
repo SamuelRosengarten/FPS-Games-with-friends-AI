@@ -39,7 +39,10 @@ export const DEFAULTS = {
   sfxVolume: 1.0,
   uiVolume: 0.7,
   // video
-  quality: 'auto',       // auto | low | medium | high | ultra
+  quality: 'auto',       // auto | low | medium | high | ultra | epic
+  aa: 'auto',            // auto (from the preset) | taa | msaa | smaa | fxaa | none
+  upscaling: 'native',   // temporal upscaling: native | quality | balanced | performance
+  sharpness: 0.5,
   dynamicRes: true,
   maxRenderScale: 1.0,
   showFps: false,

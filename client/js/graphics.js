@@ -11,17 +11,30 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { TemporalPass, OverlayMSAAPass } from './temporal.js';
 
 // targetMP: megapixels the preset aims to render at the start (dynamic resolution then probes up/down)
+// ao: false | 'half' (0.6x resolution) | 'full' · aa: none | fxaa | smaa | msaa | taa (temporal, with upscaling)
 export const PRESETS = {
-  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false, bloom: false, aa: 'none', msaa: 0, env: 0.5, particles: 0.5, targetMP: 1.2, grade: false },
-  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false, bloom: false, aa: 'fxaa', msaa: 0, env: 0.45, particles: 0.75, targetMP: 2.2, grade: true },
-  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false, bloom: true,  aa: 'smaa', msaa: 0, env: 0.45, particles: 1, targetMP: 3.5, grade: true },
-  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: true,  bloom: true,  aa: 'msaa', msaa: 4, env: 0.5, particles: 1, targetMP: 5.2, grade: true },
+  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false,  bloom: false, aa: 'none', env: 0.5, particles: 0.5, targetMP: 1.2, grade: false, probe: 128 },
+  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false,  bloom: false, aa: 'fxaa', env: 0.45, particles: 0.75, targetMP: 2.2, grade: true, probe: 128 },
+  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false,  bloom: true,  aa: 'smaa', env: 0.45, particles: 1, targetMP: 3.5, grade: true, probe: 128 },
+  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: 'half', bloom: true,  aa: 'taa', env: 0.5, particles: 1, targetMP: 3.7, grade: true, probe: 256 },
+  epic:   { label: 'Epic (RTX)', pixelRatio: 2.0, shadows: 8192, ao: 'full', bloom: true, aa: 'taa', env: 0.5, particles: 1, targetMP: 4.2, grade: true, probe: 512 },
 };
 
-// Steps taken, in order, when even the minimum render scale can't hold 60 FPS.
-const FALLBACKS = ['ao', 'bloom', 'msaa', 'shadows'];
+// Internal render scale of each upscaling mode (temporal anti-aliasing only).
+export const UPSCALING = {
+  supersample: { label: 'Supersampling (150%)', scale: 1.5 },
+  native: { label: 'Native (DLAA-style)', scale: 1 },
+  quality: { label: 'Quality (67%)', scale: 0.667 },
+  balanced: { label: 'Balanced (58%)', scale: 0.58 },
+  performance: { label: 'Performance (50%)', scale: 0.5 },
+};
+
+export const AA_MODES = {
+  auto: 'Auto (from preset)', taa: 'Temporal (TAA) + upscaling', msaa: 'MSAA 4×', smaa: 'SMAA', fxaa: 'FXAA', none: 'Off',
+};
 
 const SKY_VS = /* glsl */`
   varying vec3 vDir;
@@ -188,9 +201,10 @@ export function gpuName(renderer) {
 export function detectQuality(renderer) {
   const g = gpuName(renderer).toLowerCase();
   if (/swiftshader|llvmpipe|software|basic render/.test(g)) return 'low';
-  if (/apple m[1-9] (pro|max|ultra)|apple m[3-9]/.test(g)) return 'ultra';
-  if (/apple/.test(g)) return 'ultra'; // Safari reports "Apple GPU"; dynamic resolution keeps it smooth
-  if (/rtx|radeon rx [5-9]\d{3}|rx 6\d{3}|rx 7\d{3}|arc a7/.test(g)) return 'ultra';
+  // RTX x060 and up (desktop or laptop), Radeon RX 6700 / 7700 / 9070 class and up
+  if (/rtx\s*\d{1,2}0[6-9]0|rx\s*(6[7-9]|7[7-9]|9[0-9])\d{2}/.test(g)) return 'epic';
+  if (/rtx|radeon rx [5-9]\d{3}|rx 6\d{3}|rx 7\d{3}|arc a7|arc b/.test(g)) return 'ultra';
+  if (/apple/.test(g)) return 'ultra';
   if (/gtx|radeon|rx |arc/.test(g)) return 'high';
   if (/intel|uhd|iris|mali|adreno/.test(g)) return 'medium';
   return 'high';
@@ -217,6 +231,12 @@ export class Graphics {
     this.scene.add(this.camera);
     this.vmScene = new THREE.Scene();
     this.vmCamera = new THREE.PerspectiveCamera(settings.viewmodelFov, 1, 0.01, 20);
+    // Particles, tracers and smoke live in this child scene. With temporal AA it is drawn after the
+    // resolve (sharp and un-smeared); otherwise it renders as part of the main scene.
+    this.fxScene = new THREE.Scene();
+    this.fxScene.name = 'fx';
+    this.scene.add(this.fxScene);
+    this.temporal = null;
 
     this.renderScale = 1;
     this.frameEma = 16.7;
@@ -254,10 +274,14 @@ export class Graphics {
     this.qualityName = q;
     this.preset = PRESETS[q];
     const p = this.preset;
+    this.aa = this.s.aa && this.s.aa !== 'auto' && AA_MODES[this.s.aa] ? this.s.aa : p.aa;
+    // steps taken, in order, when even the minimum render scale can't hold 60 FPS
+    this.fallbacks = this.aa === 'msaa' ? ['ao', 'bloom', 'msaa', 'shadows'] : ['ao', 'bloom', 'shadows'];
     this.renderer.shadowMap.enabled = p.shadows > 0;
     this.sun.castShadow = p.shadows > 0;
     if (p.shadows) {
-      this.sun.shadow.mapSize.set(p.shadows, p.shadows);
+      const size = Math.min(p.shadows, this.renderer.capabilities.maxTextureSize || 4096);
+      this.sun.shadow.mapSize.set(size, size);
       if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
     }
     this.degrade = 0;
@@ -266,26 +290,59 @@ export class Graphics {
     this.scene.traverse((o) => { if (o.material) { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((m) => { m.needsUpdate = true; }); } });
     this.buildComposer();
     this.resize();
-    if (this.map) applyAtmosphere(this, this.map, { pcss: p.shadows >= 4096 });
+    if (this.map) applyAtmosphere(this, this.map, { pcss: this.pcss() });
+  }
+
+  // Display pixels per CSS pixel (the output resolution with temporal AA).
+  outputPixelRatio() {
+    return Math.min(window.devicePixelRatio || 1, this.preset.pixelRatio);
   }
 
   basePixelRatio() {
-    const dpr = window.devicePixelRatio || 1;
-    return Math.min(dpr, this.preset.pixelRatio) * (this.s.maxRenderScale || 1);
+    return this.outputPixelRatio() * (this.s.maxRenderScale || 1);
   }
 
-  // Start below full resolution on very large / Retina screens so the first seconds are smooth.
+  // Share of the output resolution rendered before the temporal upscaler (upscaling mode × render scale limit × dynamic resolution).
+  internalScale() {
+    const up = (UPSCALING[this.s.upscaling] || UPSCALING.native).scale;
+    return Math.max(0.33, Math.min(1.5, up * (this.s.maxRenderScale || 1) * this.renderScale));
+  }
+
+  // Start below full resolution on very large screens so the first seconds are smooth.
   initialScale() {
     if (!this.s.dynamicRes) return 1;
-    const pr = this.basePixelRatio();
+    const pr = this.aa === 'taa' ? this.outputPixelRatio() * (UPSCALING[this.s.upscaling] || UPSCALING.native).scale : this.basePixelRatio();
     const mp = (window.innerWidth * pr) * (window.innerHeight * pr) / 1e6;
     return Math.max(0.55, Math.min(1, Math.sqrt(this.preset.targetMP / Math.max(mp, 0.1))));
   }
 
+  // Contact-hardening sun shadows need a big enough shadow map.
+  pcss() { return this.renderer.shadowMap.enabled && this.sun.shadow.mapSize.x >= 4096; }
+
   // Is a feature still active after automatic fallbacks?
   feature(name) {
-    const i = FALLBACKS.indexOf(name);
+    const i = this.fallbacks.indexOf(name);
     return i < 0 || this.degrade <= i;
+  }
+
+  makeGtao(sizeFactor, samples) {
+    const gtao = new GTAOPass(this.scene, this.camera, 1, 1);
+    gtao.output = GTAOPass.OUTPUT.Default;
+    gtao.blendIntensity = 0.9;
+    gtao.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples, distanceFallOff: 1, screenSpaceRadius: false });
+    gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples });
+    if (sizeFactor !== 1) {
+      const origSize = gtao.setSize.bind(gtao);
+      gtao.setSize = (w, h) => origSize(Math.max(1, Math.floor(w * sizeFactor)), Math.max(1, Math.floor(h * sizeFactor)));
+    }
+    return gtao;
+  }
+
+  // Unsharp-mask strength: a little more after temporal AA, which softens slightly.
+  sharpenAmount() {
+    const k = (this.s.sharpness ?? 0.5) / 0.5;
+    if (this.aa === 'taa') return 0.5 * k;
+    return (this.preset.pixelRatio >= 1.5 ? 0.35 : 0.2) * k;
   }
 
   buildComposer() {
@@ -295,23 +352,33 @@ export class Graphics {
       for (const pass of this.composer.passes) pass.dispose?.();
     }
     const p = this.preset;
-    const msaa = this.feature('msaa') ? p.msaa : 0;
+    const taa = this.aa === 'taa';
+    const msaa = this.aa === 'msaa' && this.feature('msaa') ? 4 : 0;
     const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: msaa });
     const composer = new EffectComposer(this.renderer, rt);
-    composer.addPass(new RenderPass(this.scene, this.camera));
+    const aoOn = p.ao && this.feature('ao');
     this.gtao = null;
-    if (p.ao && this.feature('ao')) {
-      const gtao = new GTAOPass(this.scene, this.camera, 1, 1);
-      gtao.output = GTAOPass.OUTPUT.Default;
-      gtao.blendIntensity = 0.9;
-      gtao.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.4, thickness: 1.5, scale: 1.1, samples: 12, distanceFallOff: 1, screenSpaceRadius: false });
-      gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
-      const origSize = gtao.setSize.bind(gtao);
-      gtao.setSize = (w, h) => origSize(Math.max(1, Math.floor(w * 0.6)), Math.max(1, Math.floor(h * 0.6)));
-      composer.addPass(gtao);
-      this.gtao = gtao;
+    this.temporal = null;
+    if (taa) {
+      // world at internal resolution (+ AO) -> temporal resolve at output resolution -> effects -> weapon
+      const temporal = new TemporalPass(this.scene, this.camera, { fxScene: this.fxScene });
+      if (aoOn) {
+        const gtao = p.ao === 'full' ? this.makeGtao(1, 16) : this.makeGtao(0.6, 12);
+        gtao.setGBuffer(temporal.sceneRT.depthTexture); // normals are rebuilt from the scene depth
+        temporal.gtao = gtao;
+        this.gtao = gtao;
+      }
+      composer.addPass(temporal);
+      this.temporal = temporal;
+      this.overlay = new OverlayMSAAPass(this.vmScene, this.vmCamera);
+    } else {
+      composer.addPass(new RenderPass(this.scene, this.camera));
+      if (aoOn) {
+        this.gtao = this.makeGtao(0.6, 12);
+        composer.addPass(this.gtao);
+      }
+      this.overlay = new OverlayPass(this.vmScene, this.vmCamera);
     }
-    this.overlay = new OverlayPass(this.vmScene, this.vmCamera);
     composer.addPass(this.overlay);
     this.bloom = null;
     if (p.bloom && this.feature('bloom')) {
@@ -323,19 +390,25 @@ export class Graphics {
     if (p.grade) {
       this.grade = new ShaderPass(GradeShader);
       this.grade.uniforms.uCA.value = p.pixelRatio >= 1.5 ? 1 : 0;
-      this.grade.uniforms.uSharpen.value = p.pixelRatio >= 1.5 ? 0.35 : 0.2;
+      this.grade.uniforms.uSharpen.value = this.sharpenAmount();
       if (this.gradeCfg) this.applyGrade(this.gradeCfg);
       composer.addPass(this.grade);
     }
-    const aa = p.aa === 'msaa' && !msaa ? 'fxaa' : p.aa;
+    const aa = this.aa === 'msaa' && !msaa ? 'fxaa' : this.aa;
     if (aa === 'smaa') composer.addPass(new SMAAPass());
     else if (aa === 'fxaa') composer.addPass(new FXAAPass());
     this.composer = composer;
   }
 
+  applySharpness() {
+    if (this.grade) this.grade.uniforms.uSharpen.value = this.sharpenAmount();
+  }
+
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
-    const pr = this.basePixelRatio() * this.renderScale;
+    // temporal AA keeps the canvas at display resolution and scales the internal image instead
+    const pr = this.temporal ? this.outputPixelRatio() : this.basePixelRatio() * this.renderScale;
+    if (this.temporal) this.temporal.scale = this.internalScale();
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(pr);
@@ -416,6 +489,7 @@ export class Graphics {
     this.hemi.groundColor.set(th.hemi.ground);
     this.hemi.intensity = th.hemi.intensity * 0.4;
     scene.fog = new THREE.Fog(th.fog, th.fogNear, th.fogFar);
+    this.fxScene.fog = scene.fog;
     scene.background = new THREE.Color(th.fog);
     this.renderer.toneMappingExposure = th.exposure ?? 1;
     // viewmodel lighting follows the map mood
@@ -426,7 +500,7 @@ export class Graphics {
     this.themeSun = th.sun.intensity;
     this.applyGrade(th.grade || {});
     this.map = map;
-    applyAtmosphere(this, map, { pcss: this.preset.shadows >= 4096 });
+    applyAtmosphere(this, map, { pcss: this.pcss() });
   }
 
   // Capture the finished map into the environment map (ambient light + reflections from the real
@@ -437,7 +511,9 @@ export class Graphics {
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const was = hide.filter(Boolean).map((o) => [o, o.visible]);
     for (const [o] of was) o.visible = false;
-    const rt = pmrem.fromScene(this.scene, 0.04, 0.3, 3000, { size: this.preset.shadows >= 4096 ? 256 : 128, position: probeSpot(map) });
+    const size = this.preset.probe || 128;
+    // same blur in probe pixels at every size (PMREM clips blurs wider than its 20-tap kernel)
+    const rt = pmrem.fromScene(this.scene, 0.04 * Math.min(1, 256 / size), 0.3, 3000, { size, position: probeSpot(map) });
     for (const [o, v] of was) o.visible = v;
     pmrem.dispose();
     if (this.probeRT) this.probeRT.dispose();
@@ -499,21 +575,22 @@ export class Graphics {
         this.lastDrop = now;
         this.frameEma = 16.7;
         this.resize();
-      } else if (this.slowTime > 2 && this.renderScale <= MIN && this.degrade < FALLBACKS.length) {
+      } else if (this.slowTime > 2 && this.renderScale <= MIN && this.degrade < this.fallbacks.length) {
         // still too slow at the lowest resolution: switch off the most expensive effect
         this.degrade++;
         this.slowTime = 0;
         this.frameEma = 16.7;
         this.lastDrop = now;
-        if (FALLBACKS[this.degrade - 1] === 'shadows' && this.preset.shadows > 1024) {
-          const size = this.preset.shadows / 2;
+        if (this.fallbacks[this.degrade - 1] === 'shadows' && this.sun.shadow.mapSize.x > 1024) {
+          const size = this.sun.shadow.mapSize.x / 2;
           this.sun.shadow.mapSize.set(size, size);
           if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
         }
         this.buildComposer();
         this.renderScale = 0.75;
         this.resize();
-        console.info(`[breachpoint] performance fallback: disabled ${FALLBACKS[this.degrade - 1]}`);
+        if (this.map) applyAtmosphere(this, this.map, { pcss: this.pcss() });
+        console.info(`[breachpoint] performance fallback: disabled ${this.fallbacks[this.degrade - 1]}`);
       }
     } else {
       this.slowTime = 0;
@@ -531,12 +608,17 @@ export class Graphics {
 
   perfLabel() {
     const info = this.renderer.info.render;
-    const off = FALLBACKS.slice(0, this.degrade);
-    return `${Math.round(this.fps)} FPS · ${this.quality.toUpperCase()}${off.length ? ` (−${off.join(', −')})` : ''} · ${this.resolutionLabel()} (${Math.round(this.renderScale * 100)}%) · ${info.calls} calls · ${Math.round(info.triangles / 1000)}k tris`;
+    const off = this.fallbacks.slice(0, this.degrade);
+    const res = this.temporal
+      ? `${this.resolutionLabel()} · TAA ${Math.round(this.temporal.scale * 100)}%`
+      : `${this.resolutionLabel()} (${Math.round(this.renderScale * 100)}%)`;
+    return `${Math.round(this.fps)} FPS · ${this.quality.toUpperCase()}${off.length ? ` (−${off.join(', −')})` : ''} · ${res} · ${info.calls} calls · ${Math.round(info.triangles / 1000)}k tris`;
   }
 
+  // Output resolution, plus the internal one when the temporal upscaler renders below it.
   resolutionLabel() {
     const c = this.canvas;
-    return `${c.width}×${c.height}`;
+    const t = this.temporal;
+    return t && t.inW !== c.width ? `${t.inW}×${t.inH} → ${c.width}×${c.height}` : `${c.width}×${c.height}`;
   }
 }

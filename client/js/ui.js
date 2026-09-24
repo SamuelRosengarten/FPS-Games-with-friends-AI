@@ -3,7 +3,7 @@
 import { MODES, TEAM_NAMES, GAME_NAME } from '../shared/constants.js';
 import { WEAPONS, GEAR, BUY_MENU, itemPrice, itemName } from '../shared/weapons.js';
 import { ACTIONS, DEFAULTS, keyLabel, saveSettings } from './settings.js';
-import { PRESETS } from './graphics.js';
+import { PRESETS, UPSCALING, AA_MODES } from './graphics.js';
 import { esc } from './hud.js';
 
 const $ = (id) => document.getElementById(id);
@@ -264,7 +264,11 @@ export class UI {
         break;
       case 'video': {
         select('quality', 'Graphics quality', [['auto', 'Auto (recommended)'], ...Object.entries(PRESETS).map(([k, p]) => [k, p.label])],
-          'Ultra: 4K shadows, ambient occlusion, bloom, 4× MSAA, native Retina resolution');
+          'Epic (RTX 3060 and up): 8K soft shadows, full-resolution ambient occlusion, temporal AA · Ultra: 4K shadows, half-res AO');
+        select('aa', 'Anti-aliasing', Object.entries(AA_MODES), 'Temporal AA gives the cleanest image and enables upscaling');
+        select('upscaling', 'Upscaling (temporal AA)', Object.entries(UPSCALING).map(([k, u]) => [k, u.label]),
+          'Renders fewer pixels and rebuilds full resolution from previous frames, like DLSS / FSR (without the AI part)');
+        slider('sharpness', 'Sharpness', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
         check('dynamicRes', 'Dynamic resolution', 'Lowers render resolution on the fly to stay above 60 FPS');
         slider('maxRenderScale', 'Max render scale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
         check('showFps', 'Show FPS counter');
