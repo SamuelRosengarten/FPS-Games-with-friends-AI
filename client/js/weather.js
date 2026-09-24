@@ -469,8 +469,7 @@ export class Weather {
         su.uFlash.value = f;
         if (this.boltDir) su.uFlashDir.value.copy(this.boltDir);
       }
-      g.vmHemi.intensity *= 1 + f * 2 * (1 - indoor * 0.6);
-      g.vmSun.intensity = this.baseSun.vm + f * 4 * (1 - indoor * 0.7);
+      // (the weapon in hand follows the sun and sky lights: see Graphics.updateViewmodelLighting)
       if (this.bolt) this.bolt.visible = this.t < this.boltUntil && f > 0.05;
     }
     this.audio?.setRainIndoor?.(indoor);

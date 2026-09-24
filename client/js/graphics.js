@@ -296,7 +296,16 @@ export class Graphics {
     this.vmHemi = new THREE.HemisphereLight(0xffffff, 0x666666, 1.2);
     this.vmSun = new THREE.DirectionalLight(0xffffff, 2.2);
     this.vmSun.position.set(0.6, 1, 0.4);
-    this.vmScene.add(this.vmHemi, this.vmSun);
+    // faint light from beyond the gun: catches its edges so it stands out from the background
+    this.vmRim = new THREE.DirectionalLight(0xffffff, 0);
+    this.vmRim.position.set(-0.3, 0.35, -1);
+    // light bounced off the ground and the player's own body onto the gun (from below / behind the view)
+    this.vmBounce = new THREE.DirectionalLight(0xffffff, 0);
+    this.vmBounce.position.set(0.2, -0.6, 1);
+    this.vmScene.add(this.vmHemi, this.vmSun, this.vmRim, this.vmBounce);
+    this.vmSunLit = 1;
+    this.vmIndoor = 0;
+    this.sunVisibleAt = null; // (pos, dir) => boolean, set by the game (physics raycast towards the sun)
     this.vmFlash = new THREE.PointLight(0xffc070, 0, 3, 1.5);
     this.vmFlash.position.set(0.1, -0.05, -0.8);
     this.vmScene.add(this.vmFlash);
@@ -616,10 +625,34 @@ export class Graphics {
   setHurt(v) { if (this.grade) this.grade.uniforms.uHurt.value = v; }
 
   // indoor = 0..1 how much the player is under a roof (dims the viewmodel lighting)
-  setViewmodelLight(indoor) {
-    const k = 1 - indoor * 0.5;
-    this.vmHemi.intensity = (this.themeHemi || 1) * 0.75 * k;
-    this.vmSun.intensity = (this.themeSun || 2.5) * 0.45 * (1 - indoor * 0.8);
+  setViewmodelLight(indoor) { this.vmIndoor = indoor; }
+
+  // The weapon in hand is lit like the world around it: the sun (or moon, or a lightning flash) from its
+  // real direction relative to the view and only when the camera isn't in shade, the sky from above,
+  // and reflections of the captured surroundings turning with the camera.
+  updateViewmodelLighting(dt) {
+    const cam = this.camera;
+    const inv = _q.copy(cam.quaternion).invert();
+    const sd = _v.copy(this.sun.position).sub(this.sun.target.position).normalize();
+    const lit = this.sunVisibleAt ? (this.sunVisibleAt(cam.position, sd) ? 1 : 0) : 1 - this.vmIndoor;
+    this.vmSunLit += (lit - this.vmSunLit) * Math.min(1, dt * 7);
+    this.vmSun.position.copy(sd).applyQuaternion(inv);
+    this.vmSun.color.copy(this.sun.color);
+    this.vmSun.intensity = this.sun.intensity * 0.75 * this.vmSunLit;
+    const indoor = this.vmIndoor;
+    this.vmHemi.position.set(0, 1, 0).applyQuaternion(inv);
+    this.vmHemi.color.copy(this.hemi.color);
+    this.vmHemi.groundColor.copy(this.hemi.groundColor);
+    this.vmHemi.intensity = this.hemi.intensity * 2.4 * (1 - indoor * 0.45);
+    // the sunlit ground bounces warm light up onto the gun
+    const sunUp = Math.max(0, sd.y) * this.sun.intensity * (0.35 + 0.65 * this.vmSunLit);
+    this.vmBounce.color.copy(this.hemi.groundColor).lerp(this.sun.color, 0.3);
+    this.vmBounce.intensity = (0.12 * sunUp + this.hemi.intensity * 0.5) * (1 - indoor * 0.5);
+    this.vmRim.color.copy(this.hemi.color);
+    this.vmRim.intensity = this.hemi.intensity * 0.9 * (1 - indoor * 0.6);
+    // environment map rotation: view space -> world space (three negates the angles, see WebGLMaterials)
+    this.vmScene.environmentRotation.set(-cam.rotation.x, -cam.rotation.y, -cam.rotation.z, 'YXZ');
+    this.vmScene.environmentIntensity = (this.scene.environmentIntensity || 0.6) * 1.25 * (1 - indoor * 0.35);
   }
 
   // ---------------------------------------------------------------- frame
@@ -632,6 +665,7 @@ export class Graphics {
       this.sky.position.copy(this.camera.position);
     }
     if (this.lens) this.updateLens(dt);
+    this.updateViewmodelLighting(dt);
     this.composer.render(dt);
   }
 

@@ -28,16 +28,29 @@ function detailed(key, params, kind) {
   return m;
 }
 const M = {
-  gunmetal: () => detailed('gunmetal', { color: 0x2a2c30, metalness: 0.75, roughness: 0.38 }, 'metal'),
+  // black finishes are still dark grey in real life (and the metal ones reflect): physically plausible albedos
+  gunmetal: () => detailed('gunmetal', { color: 0x4a4e55, metalness: 0.6, roughness: 0.36 }, 'metal'),
   steel: () => detailed('steel', { color: 0x8d9299, metalness: 0.9, roughness: 0.3 }, 'metal'),
   blade: () => detailed('blade', { color: 0xc8ccd2, metalness: 1, roughness: 0.2 }, 'metal'),
-  polymer: () => detailed('polymer', { color: 0x1c1d1f, metalness: 0.05, roughness: 0.72 }, 'polymer'),
+  polymer: () => detailed('polymer', { color: 0x303236, metalness: 0.05, roughness: 0.62 }, 'polymer'),
   wood: () => detailed('wood', { color: 0x6b4a2c, metalness: 0, roughness: 0.5 }, 'wood'),
   brass: () => mat('brass', { color: 0xc9a14a, metalness: 1, roughness: 0.3 }),
   glass: () => mat('glass', { color: 0x223344, metalness: 0.9, roughness: 0.05, emissive: 0x0a1a2a }),
   red: () => mat('reddot', { color: 0xff2020, emissive: 0xff2020, emissiveIntensity: 3 }),
-  rubber: () => detailed('rubber', { color: 0x161616, metalness: 0, roughness: 0.9 }, 'rubber'),
-  color: (hex, metal = 0.35, rough = 0.5) => detailed(`c${hex}_${metal}_${rough}`, { color: hex, metalness: metal, roughness: rough }, metal >= 0.4 ? 'metal' : 'polymer'),
+  rubber: () => detailed('rubber', { color: 0x252525, metalness: 0, roughness: 0.85 }, 'rubber'),
+  color: (hex, metal = 0.35, rough = 0.5) => {
+    // Dark gun finishes are paint, parkerizing or anodizing: a dark-grey coat with ordinary reflections,
+    // not a near-black bare metal (which renders as a featureless silhouette).
+    const c = new THREE.Color(hex);
+    const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+    let m = metal;
+    if (lum < 0.3) {
+      c.lerp(new THREE.Color(metal >= 0.4 ? 0x5a5e64 : 0x46494d), metal >= 0.4 ? 0.3 : 0.2);
+      if (metal >= 0.4) m = Math.min(metal, 0.32);
+    }
+    const h = c.getHex();
+    return detailed(`c${h}_${m}_${rough}`, { color: h, metalness: m, roughness: rough }, metal >= 0.4 ? 'metal' : 'polymer');
+  },
 };
 
 // Weapon parts: chamfered edges (they catch highlights) and metre-scaled UVs for the detail maps.
