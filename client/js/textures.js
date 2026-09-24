@@ -115,13 +115,27 @@ export function addMacroVariation(m, pomScale = 0) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n#define MACRO_VAR\nuniform sampler2D uMacroTex;\nvarying vec3 vMacroPos;\nvarying vec3 vMacroNrm;')
       .replace('#include <map_fragment>', `#include <map_fragment>
+        float macroGrime = 0.0;
         vec3 macroA = abs(vMacroNrm);
         vec2 macroUV = macroA.y > max(macroA.x, macroA.z) ? vMacroPos.xz : (macroA.x > macroA.z ? vMacroPos.zy : vMacroPos.xy);
         float macroN1 = texture2D(uMacroTex, macroUV * 0.019).r;
         float macroN2 = texture2D(uMacroTex, macroUV * 0.071).g;
-        diffuseColor.rgb *= mix(0.8, 1.14, macroN1) * mix(0.92, 1.06, macroN2);`)
+        diffuseColor.rgb *= mix(0.8, 1.14, macroN1) * mix(0.92, 1.06, macroN2);
+        // weathering on walls: grime splashed up along the base and dirt / water streaks running down
+        float wallK = 1.0 - smoothstep(0.35, 0.6, macroA.y);
+        if (wallK > 0.0) {
+          float gN = texture2D(uMacroTex, macroUV * vec2(0.9, 0.35)).r;
+          float grime = (1.0 - smoothstep(0.05, 0.75 + 0.7 * gN, vMacroPos.y)) * wallK;
+          float st = texture2D(uMacroTex, vec2(macroUV.x * 1.9, vMacroPos.y * 0.012)).g;
+          float stGate = texture2D(uMacroTex, vec2(macroUV.x * 0.06 + 0.3, vMacroPos.y * 0.03)).r;
+          float streak = smoothstep(0.54, 0.7, st) * smoothstep(0.3, 0.6, stGate) * smoothstep(0.3, 1.6, vMacroPos.y) * wallK;
+          vec3 dirt = vec3(0.34, 0.3, 0.25);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * dirt * 1.6, grime * 0.6);
+          diffuseColor.rgb *= 1.0 - streak * 0.24;
+          macroGrime = grime;
+        }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        roughnessFactor = clamp(roughnessFactor * mix(0.86, 1.1, macroN2), 0.04, 1.0);`);
+        roughnessFactor = clamp(roughnessFactor * mix(0.86, 1.1, macroN2) + macroGrime * 0.15, 0.04, 1.0);`);
     if (pomScale) pomPatch(sh, pomScale);
     specOcclusion(sh);
   };

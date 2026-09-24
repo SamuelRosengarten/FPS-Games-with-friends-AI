@@ -84,6 +84,7 @@ export class ClientGame {
     const wcfg = this.map.theme.weather;
     this.torches.setup(this.night, this.world, wcfg ? (wcfg.id === 'fog' ? 1.6 : wcfg.rain > 0 ? 1 : 0.3) : 0);
     this.audio.isOutdoor = (pos) => !this.worldView.roofedAt(pos[0], pos[2], pos[1] + 0.5);
+    this.g.sunVisibleAt = (p, d) => !this.world.raycast(p.x, p.y, p.z, d.x, d.y, d.z, 90);
     this.effects.onCasingBounce = (p, big) => this.audio.casing(p, big);
     this.audio.occlusion = (pos) => {
       const l = this.audio.listener;
@@ -159,6 +160,7 @@ export class ClientGame {
     this.active = false;
     this.audio.occlusion = null;
     this.audio.isOutdoor = null;
+    this.g.sunVisibleAt = null;
     this.worldView?.dispose();
     this.decor?.dispose();
     this.effects?.dispose();

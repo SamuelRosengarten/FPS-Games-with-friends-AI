@@ -52,6 +52,7 @@ if (view === 'vm') {
   if (q.get('reinforce')) map.destructibles.forEach((id, i) => { if (Math.floor(i / 6) % 2 === 0) wv.setPanelReinforced(id, true); });
   window.__decor = decor;
   const pw = new PhysicsWorld(map.boxes, map.bounds);
+  g.sunVisibleAt = (p, d) => !pw.raycast(p.x, p.y, p.z, d.x, d.y, d.z, 90);
   if (q.get('weather')) {
     window.__weather = new Weather(g, null);
     window.__weather.setup(map, pw);

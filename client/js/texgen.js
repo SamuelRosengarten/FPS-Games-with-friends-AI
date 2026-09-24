@@ -131,14 +131,25 @@ function toTextureData(tc, normalStrength) {
 // ------------------------------------------------------------------ pattern helpers
 
 // Running-bond blocks. Returns { bx, by, fx, fy, edge, id } for a point in unit space.
-function blocks(u, v, cols, rows, stagger = 0.5, jitter = null) {
+// jitter (0..0.9): each joint in a row is moved sideways by up to half of it, giving blocks of uneven
+// length like hand-laid stone (still tiling: the joints repeat every `cols`).
+function blocks(u, v, cols, rows, stagger = 0.5, jitter = 0) {
   const row = Math.floor(v * rows);
   const off = (row % 2) * stagger;
-  let x = u * cols + off;
-  const col = Math.floor(x);
-  const fx = x - col, fy = v * rows - row;
-  const ex = Math.min(fx, 1 - fx) / cols * rows, ey = Math.min(fy, 1 - fy);
-  return { col: ((col % cols) + cols) % cols, row, fx, fy, edge: Math.min(ex, ey), id: row * 131 + (((col % cols) + cols) % cols) * 17 };
+  const x = u * cols + off;
+  let col = Math.floor(x);
+  const fy = v * rows - row;
+  let fx, w = 1;
+  if (jitter > 0) {
+    const d = (k) => (hashf(((row % rows) + rows) % rows * 977 + (((k % cols) + cols) % cols) * 131 + 7) - 0.5) * jitter;
+    let a = col + d(col), b = col + 1 + d(col + 1);
+    if (x < a) { b = a; col -= 1; a = col + d(col); } else if (x > b) { a = b; col += 1; b = col + 1 + d(col + 1); }
+    w = b - a;
+    fx = (x - a) / w;
+  } else fx = x - col;
+  const ex = Math.min(fx, 1 - fx) * w / cols * rows, ey = Math.min(fy, 1 - fy);
+  const wc = ((col % cols) + cols) % cols;
+  return { col: wc, row, fx, fy, edge: Math.min(ex, ey), id: row * 131 + wc * 17 };
 }
 
 function hashf(n) {
@@ -175,17 +186,23 @@ const RECIPES = {
   },
   stoneBlocks(tc, n, opt) {
     const base = hex(opt.color), var2 = hex(opt.color2 ?? opt.color);
+    const lime = [0.8, 0.74, 0.63];
     tc.each((u, v, i) => {
-      const b = blocks(u, v, opt.cols ?? 4, opt.rows ?? 8, 0.5);
+      const b = blocks(u, v, opt.cols ?? 4, opt.rows ?? 8, 0.5, opt.jitter ?? 0.55);
       const bh = hashf(b.id);
       const noise = n.fbm(u, v, 8, 5);
       const fine = n.v(u * 180, v * 180, 180);
       const mortar = 1 - smooth(0.0, opt.mortar ?? 0.06, b.edge);
       const t = bh * 0.6 + noise * 0.4;
       let c = [mix(base[0], var2[0], t), mix(base[1], var2[1], t), mix(base[2], var2[2], t)];
-      const shade = 0.88 + bh * 0.2 + (noise - 0.5) * 0.25 + fine * 0.06;
-      c = c.map((x) => x * shade);
-      const mc = c.map((x) => x * 0.62);
+      // every stone differs: some sun-bleached, some darker and older, a few with a warmer tint
+      const kind = hashf(b.id * 3.7 + 1.3);
+      const tone = kind < 0.14 ? 0.8 : kind > 0.9 ? 1.1 : 1;
+      const warm = hashf(b.id * 5.1) > 0.8 ? [1.04, 0.99, 0.92] : [1, 1, 1];
+      const shade = (0.86 + bh * 0.24 + (noise - 0.5) * 0.25 + fine * 0.06) * tone;
+      c = c.map((x, k) => x * shade * warm[k]);
+      // lime mortar: lighter than the stone, a little dirty, recessed (see height below)
+      const mc = c.map((x, k) => mix(x * 0.78, lime[k] * (0.85 + noise * 0.15), 0.45));
       const weather = smooth(0.55, 0.8, n.fbm(u + 0.3, v * 0.5, 4, 4)) * 0.18;
       c = c.map((x, k) => mix(x, mc[k], mortar) - weather * (k === 2 ? 0.02 : 0.08));
       // rounded, chipped block edges, pitted faces, dust settled on the top of each block
