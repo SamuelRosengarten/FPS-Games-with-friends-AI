@@ -193,7 +193,7 @@ export class BotBrain {
       const H = heightFor(q.crouch);
       const dx = q.x - eye[0], dz = q.z - eye[2];
       const dist = Math.hypot(dx, dz);
-      if (dist > 110) continue;
+      if (dist > (m.sightRange || 110)) continue; // fog / rain limit how far anyone can see
       const cosA = (dx * f[0] + dz * f[2]) / (dist || 1);
       // things right in front of you, or someone you're already fighting, are noticed more easily
       const tracked = q === this.target || (this.mem.get(q.id)?.seen && now - this.mem.get(q.id).t < 1500);
@@ -217,7 +217,7 @@ export class BotBrain {
       if (!q.alive || !m.enemies(p, q) || !m.inMatch(q) || this.visible.some((v) => v.q === q)) continue;
       const sp = Math.hypot(q.vx || 0, q.vz || 0);
       const d = Math.hypot(q.x - p.x, q.z - p.z);
-      if (sp > 3.2 && !q.walking && q.onGround && d < 18 && Math.abs(q.y - p.y) < 3) this.remember(q, false, 1.2);
+      if (sp > 3.2 && !q.walking && q.onGround && d < 18 * (m.hearingScale || 1) && Math.abs(q.y - p.y) < 3) this.remember(q, false, 1.2);
     }
     if (this.visible.length) {
       const q = this.visible[0].q;

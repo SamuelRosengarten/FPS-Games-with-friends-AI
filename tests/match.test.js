@@ -208,3 +208,23 @@ for (const def of MAP_DEFS) {
     });
   }
 }
+
+test('weather: host setting reaches the match, random resolves, fog limits bot sight', async () => {
+  const { resolveWeather, WEATHER } = await import('../shared/constants.js');
+  const { g, c } = setup({ mode: 'tdm', map: 'compound', fillBots: 1, weather: 'fog' });
+  assert.equal(g.settings.weather, 'fog');
+  g.applySettings({ weather: 'hail' }); // unknown values are ignored
+  assert.equal(g.settings.weather, 'fog');
+  g.startMatch();
+  assert.equal(g.match.weather, 'fog');
+  assert.equal(g.match.sightRange, WEATHER.fog.sight);
+  assert.equal(c.last('match').weather, 'fog');
+  g.run(8);
+  assert.ok(g.match.sightRange < 60, 'fog cuts sight range');
+  // random always resolves to a real weather
+  const seen = new Set();
+  for (let i = 0; i < 200; i++) seen.add(resolveWeather('random'));
+  for (const w of seen) assert.ok(WEATHER[w], w);
+  assert.ok(seen.size >= 3);
+  assert.equal(resolveWeather('storm'), 'storm');
+});

@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 import {
-  TEAM, TEAM_NAMES, PLAYER, FLAG, INTERP_DELAY, USE_RANGE, MODES, DEG,
+  TEAM, TEAM_NAMES, PLAYER, FLAG, INTERP_DELAY, USE_RANGE, MODES, DEG, WEATHER,
   clamp, lerp, angleLerp, wrapAngle, viewDir, isEnemy, TAG_MS, tagSlow,
 } from '../shared/constants.js';
 import { WEAPONS, GRENADES, computeSpread, applySpread, recoilDelta, GUNGAME_ORDER } from '../shared/weapons.js';
@@ -17,6 +17,7 @@ import { Effects } from './effects.js';
 import { ViewModel } from './viewmodel.js';
 import { PlayerModel, teamLook, weaponTemplate, bakedWeapon } from './models.js';
 import { Radar, esc } from './hud.js';
+import { Weather, weatherTheme } from './weather.js';
 
 const SURFACE_IDX = { stone: 0, wood: 1, metal: 2, sand: 3 };
 const tmpV = new THREE.Vector3();
@@ -50,6 +51,8 @@ export class ClientGame {
     this.matchSettings = msg.settings;
     this.ffa = msg.mode === 'ffa' || msg.mode === 'gungame';
     this.map = loadMap(msg.map);
+    this.weatherId = msg.weather || 'clear';
+    this.map.theme = weatherTheme(this.map.theme, this.weatherId); // before the environment is set up
     this.world = new PhysicsWorld(this.map.boxes, this.map.bounds);
     if (!this.tex || this.tex.quality !== this.g.quality) {
       this.tex = new TextureLibrary(this.g.renderer, this.g.quality);
@@ -57,7 +60,8 @@ export class ClientGame {
     }
     const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', 'metal', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
     const t0 = performance.now();
-    await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}… ${Math.round(f * 100)}%`; });
+    const wx = this.weatherId !== 'clear' && WEATHER[this.weatherId] ? ` · ${WEATHER[this.weatherId].name}` : '';
+    await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}${wx}… ${Math.round(f * 100)}%`; });
     const t1 = performance.now();
     this.g.setupEnvironment(this.map);
     const tEnv = performance.now();
@@ -69,6 +73,8 @@ export class ClientGame {
     this.effects = new Effects(this.g);
     this.effects.setWorld(this.world);
     this.effects.setAmbient(this.map.theme.motes);
+    this.weatherFx = this.weatherFx || new Weather(this.g, this.audio);
+    this.weatherFx.setup(this.map, this.world);
     this.effects.onCasingBounce = (p, big) => this.audio.casing(p, big);
     this.audio.occlusion = (pos) => {
       const l = this.audio.listener;
@@ -146,6 +152,7 @@ export class ClientGame {
     this.worldView?.dispose();
     this.decor?.dispose();
     this.effects?.dispose();
+    this.weatherFx?.dispose();
     this.g.setHurt(0);
     for (const p of this.players.values()) this.g.scene.remove(p.model.root);
     this.players.clear();
@@ -1326,6 +1333,7 @@ export class ClientGame {
     }
     this.viewmodel.setVisible(vmVisible);
     this.g.setViewmodelLight(indoor);
+    this.weatherFx?.update(dt, indoor);
     const targetFov = this.settings.fov;
     this.curZoom = this.curZoom ? lerp(this.curZoom, zoom, Math.min(1, dt * 18)) : zoom;
     if (Math.abs(this.curZoom - zoom) < 0.002) this.curZoom = zoom;

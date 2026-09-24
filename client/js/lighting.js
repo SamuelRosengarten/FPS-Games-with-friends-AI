@@ -158,6 +158,31 @@ const FS = /* glsl */`
   }
 `;
 
+// Map roof layout as a texture over the map's grid: r = roofed, g = roof height / 20 m (linear filtered,
+// so edges blend over a cell). Sample at (xz - x0z0) * roofTransform.zw.
+export function makeRoofTexture(map) {
+  const { cols, rows } = map;
+  const data = new Uint8Array(cols * rows * 4);
+  const U = map.upper;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (!map.roofed[r][c]) continue;
+      const top = U && U.roofed[r][c] ? U.floorY + U.roofHeight : (U && U.grid[r][c] !== ' ' ? U.floorY : map.roofHeight);
+      const i = (r * cols + c) * 4;
+      data[i] = 255;
+      data[i + 1] = Math.min(255, Math.round((top + 0.3) / 20 * 255));
+    }
+  }
+  const t = new THREE.DataTexture(data, cols, rows, THREE.RGBAFormat);
+  t.magFilter = t.minFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
+
+export function roofTransform(map) {
+  return new THREE.Vector4(map.x0, map.z0, 1 / (map.cols * map.cellSize), 1 / (map.rows * map.cellSize));
+}
+
 export class ScreenLighting {
   constructor({ volSteps = 16, ssr = true } = {}) {
     this.volSteps = volSteps;
@@ -197,25 +222,11 @@ export class ScreenLighting {
     u.uMaxDist.value = v.maxDist ?? 45;
     u.uGround.value = map.bounds.minY ?? 0;
     this.roofTex?.dispose();
-    const { cols, rows } = map;
-    const data = new Uint8Array(cols * rows * 4);
-    const U = map.upper;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (!map.roofed[r][c]) continue;
-        const top = U && U.roofed[r][c] ? U.floorY + U.roofHeight : (U && U.grid[r][c] !== ' ' ? U.floorY : map.roofHeight);
-        const i = (r * cols + c) * 4;
-        data[i] = 255;
-        data[i + 1] = Math.min(255, Math.round((top + 0.3) / 20 * 255));
-      }
-    }
-    const t = new THREE.DataTexture(data, cols, rows, THREE.RGBAFormat);
-    t.magFilter = t.minFilter = THREE.LinearFilter;
-    t.needsUpdate = true;
+    const t = makeRoofTexture(map);
     this.roofTex = t;
     u.tRoof.value = t;
     u.uRoofOn.value = 1;
-    u.uRoofXf.value.set(map.x0, map.z0, 1 / (cols * map.cellSize), 1 / (rows * map.cellSize));
+    u.uRoofXf.value.copy(roofTransform(map));
   }
 
   // colorTex: scene colour after AO · maskTex: raw scene colour (alpha = 1 - reflectivity)

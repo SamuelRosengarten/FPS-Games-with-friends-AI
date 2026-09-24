@@ -96,7 +96,24 @@ export const DEFAULT_SETTINGS = Object.freeze({
   botDifficulty: 'normal',
   fillBots: 0,            // fill each team up to this many players with bots
   startMoney: 800,
+  weather: 'clear',       // clear | rain | storm | fog | random
 });
+
+// Weather the host can pick. sight: how far anyone can make out a player (bots use it; the client's fog
+// is tuned to match) · hearing: footstep hearing range multiplier (rain masks footsteps).
+export const WEATHER = Object.freeze({
+  clear: { id: 'clear', name: 'Clear', sight: 110, hearing: 1 },
+  rain: { id: 'rain', name: 'Rain', sight: 85, hearing: 0.8 },
+  storm: { id: 'storm', name: 'Thunderstorm', sight: 62, hearing: 0.65 },
+  fog: { id: 'fog', name: 'Fog', sight: 42, hearing: 1 },
+});
+
+// 'random' picks one per match (clear twice as likely).
+export function resolveWeather(w, rand = Math.random) {
+  if (WEATHER[w]) return w;
+  const pool = ['clear', 'clear', 'rain', 'storm', 'fog'];
+  return pool[Math.floor(rand() * pool.length) % pool.length];
+}
 
 export const ECONOMY = Object.freeze({
   maxMoney: 16000,

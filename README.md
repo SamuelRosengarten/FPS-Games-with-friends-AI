@@ -7,6 +7,9 @@ One friend runs the server, everyone else plays in the browser. Tuned for **Wind
 - **4 game modes**: Defuse (round-based bomb plant/defuse with economy), Team Deathmatch, Free For All, Gun Game
 - **4 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls),
   *Embassy* (two floors: atrium, balcony, inside and outside staircases), *Arena* (compact deathmatch)
+- **Weather**: clear, rain, thunderstorm or fog on any map (the host picks it, or *Random*). Rain falls around you and
+  stops under roofs, streets get wet and reflective, storms bring gusting wind, lightning and rolling thunder, and fog
+  hides players beyond about 40 metres — bots see less far in fog too, and rain masks footsteps
 - **11 guns + knife + frag/flash/smoke grenades + breach charges**, learnable recoil patterns, movement/jump inaccuracy,
   aim-down-sights, sniper scopes, tagging (getting hit slows you down)
 - **R6-style destruction**: breakable wooden walls you can shoot or blow holes through, wall-banging, leaning (Q/E);
@@ -136,8 +139,8 @@ All keys can be rebound in **Settings → Keys**.
 - **Free For All** — everyone against everyone, first to the kill limit.
 - **Gun Game** — every kill gives you the next weapon; the last one is the knife. Getting knifed sends you back a level.
 
-The host can change rounds, round time, kill/time limits, friendly fire, and fill teams with **bots** (Easy / Normal / Hard /
-Expert) from the lobby. *Easy* is relaxed, *Normal* is a fair fight for casual players, *Hard* punishes mistakes and *Expert*
+The host can change rounds, round time, kill/time limits, friendly fire, the **weather** (Clear / Rain / Thunderstorm /
+Fog / Random), and fill teams with **bots** (Easy / Normal / Hard / Expert) from the lobby. *Easy* is relaxed, *Normal* is a fair fight for casual players, *Hard* punishes mistakes and *Expert*
 has near-pro reactions and aim — use it when you want a real challenge. Players can join a match that is already running.
 
 ### Weapons
