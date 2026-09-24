@@ -319,6 +319,12 @@ export class AudioEngine {
         this.burst(out, t, { type: 'bandpass', freq: 1500 * r, q: 1.2, peak: 0.7, decay: 0.05 });
         this.tone(out, t, { freq: 90 * r, to: 60, peak: 0.45, decay: 0.06 });
     }
+    // wet ground outdoors: a splash on top of the step
+    const wet = this.wetness > 0 && (!this.isOutdoor || this.isOutdoor(pos || [this.listener.x, this.listener.y, this.listener.z])) ? this.wetness : 0;
+    if (wet > 0) {
+      this.burst(out, t + 0.01, { type: 'bandpass', freq: 2300 * r, q: 0.9, attack: 0.004, peak: 0.55 * wet, decay: 0.11 });
+      this.burst(out, t + 0.02, { type: 'lowpass', freq: 650 * r, q: 0.7, attack: 0.01, peak: 0.5 * wet, decay: 0.16, buf: this.pink });
+    }
     this.track(0.2);
   }
 

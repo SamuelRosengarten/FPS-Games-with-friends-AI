@@ -75,6 +75,7 @@ export class ClientGame {
     this.effects.setAmbient(this.map.theme.motes);
     this.weatherFx = this.weatherFx || new Weather(this.g, this.audio);
     this.weatherFx.setup(this.map, this.world);
+    this.audio.isOutdoor = (pos) => !this.worldView.roofedAt(pos[0], pos[2], pos[1] + 0.5);
     this.effects.onCasingBounce = (p, big) => this.audio.casing(p, big);
     this.audio.occlusion = (pos) => {
       const l = this.audio.listener;
@@ -149,6 +150,7 @@ export class ClientGame {
     if (!this.active) return;
     this.active = false;
     this.audio.occlusion = null;
+    this.audio.isOutdoor = null;
     this.worldView?.dispose();
     this.decor?.dispose();
     this.effects?.dispose();

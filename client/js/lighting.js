@@ -30,6 +30,9 @@ const FS = /* glsl */`
   uniform vec2 uSize;
   uniform float uFrame, uShadowOn, uRoofOn;
   uniform float uDensity, uIndoor, uHeight, uGround, uMaxDist;
+  uniform highp sampler3D tNoise3D; // tiling fbm noise: drifting fog banks and rain curtains
+  uniform vec3 uNoiseScale, uWindOff, uAmbCol;
+  uniform float uHetero, uExt, uMist;
   uniform int uDebug;           // 1: reflectivity mask, 2: reflections only, 3: scattered light only
   varying vec2 vUv;
 
@@ -48,7 +51,13 @@ const FS = /* glsl */`
     return step(c.z - 0.0008, unpackRGBAToDepth(texture2D(tShadow, c.xy)));
   }
   float density(vec3 p) {
-    float d = uDensity * exp(-max(p.y - uGround, 0.0) / uHeight);
+    float h = max(p.y - uGround, 0.0);
+    float d = uDensity * (exp(-h / uHeight) + uMist * exp(-h / 0.9)); // + spray mist hugging the ground in rain
+    if (uHetero > 0.0) {
+      vec3 q = p * uNoiseScale + uWindOff;
+      float n = texture(tNoise3D, q).r * 0.65 + texture(tNoise3D, q * 2.7 + 0.37).r * 0.35;
+      d *= mix(1.0, smoothstep(0.3, 0.72, n) * 2.2, uHetero);
+    }
     if (uRoofOn > 0.5) {
       vec4 r = texture2D(tRoof, (p.xz - uRoofXf.xy) * uRoofXf.zw);
       d *= 1.0 + uIndoor * r.r * step(p.y, r.g * 20.0);
@@ -140,17 +149,21 @@ const FS = /* glsl */`
     float g = 0.6, gg = g * g;
     float phase = 0.0796 * ((1.0 - gg) / pow(1.0 + gg - 2.0 * g * dot(dir, uSunDir), 1.5) * 0.8 + 0.2);
     float jit = ign(gl_FragCoord.xy, 0.0);
-    float acc = 0.0, od = 0.0;
+    float acc = 0.0, accA = 0.0, od = 0.0;
     for (int i = 0; i < VOL_STEPS; i++) {
       float a = float(i) / float(VOL_STEPS), b = float(i + 1) / float(VOL_STEPS);
       float t0 = len * a * a, t1 = len * b * b; // denser steps near the camera
       vec3 p = uCamPos + dir * mix(t0, t1, jit);
       float d = density(p);
       float seg = t1 - t0;
-      acc += d * sunVisible(p) * seg * exp(-od);
+      float tr = exp(-od);
+      acc += d * sunVisible(p) * seg * tr;
+      accA += d * seg * tr;
       od += d * seg;
     }
-    col = col * exp(-od * 0.25) + uSunCol * (acc * phase);
+    // sunlight scattered towards the camera, plus sky light scattered by the haze (makes fog banks and
+    // rain curtains visible under an overcast sky)
+    col = col * exp(-od * uExt) + uSunCol * (acc * phase) + uAmbCol * accA;
     if (uDebug == 3) dbg = uSunCol * (acc * phase) * 8.0;
 #endif
 
@@ -183,6 +196,43 @@ export function roofTransform(map) {
   return new THREE.Vector4(map.x0, map.z0, 1 / (map.cols * map.cellSize), 1 / (map.rows * map.cellSize));
 }
 
+// 32³ tiling value-noise fbm (shared).
+let noiseTex = null;
+function noise3D() {
+  if (noiseTex) return noiseTex;
+  const N = 32;
+  const lat = (period, seed) => {
+    const a = new Float32Array(period ** 3);
+    let s = seed;
+    for (let i = 0; i < a.length; i++) { s = (s * 16807) % 2147483647; a[i] = s / 2147483647; }
+    return (x, y, z) => a[((z % period) * period + (y % period)) * period + (x % period)];
+  };
+  const octaves = [[4, 11, 0.55], [8, 23, 0.3], [16, 37, 0.15]].map(([p, seed, w]) => ({ p, v: lat(p, seed), w }));
+  const data = new Uint8Array(N ** 3);
+  const sm = (t) => t * t * (3 - 2 * t);
+  for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    let v = 0;
+    for (const o of octaves) {
+      const fx = x / N * o.p, fy = y / N * o.p, fz = z / N * o.p;
+      const ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz);
+      const tx = sm(fx - ix), ty = sm(fy - iy), tz = sm(fz - iz);
+      const c = (dx, dy, dz) => o.v(ix + dx, iy + dy, iz + dz);
+      const l = (a, b, t) => a + (b - a) * t;
+      v += o.w * l(l(l(c(0, 0, 0), c(1, 0, 0), tx), l(c(0, 1, 0), c(1, 1, 0), tx), ty), l(l(c(0, 0, 1), c(1, 0, 1), tx), l(c(0, 1, 1), c(1, 1, 1), tx), ty), tz);
+    }
+    data[(z * N + y) * N + x] = Math.round(v * 255);
+  }
+  const t = new THREE.Data3DTexture(data, N, N, N);
+  t.format = THREE.RedFormat;
+  t.type = THREE.UnsignedByteType;
+  t.minFilter = t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = t.wrapR = THREE.RepeatWrapping;
+  t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  noiseTex = t;
+  return t;
+}
+
 export class ScreenLighting {
   constructor({ volSteps = 16, ssr = true } = {}) {
     this.volSteps = volSteps;
@@ -196,6 +246,8 @@ export class ScreenLighting {
         uCamPos: { value: new THREE.Vector3() }, uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uSunCol: { value: new THREE.Color() },
         uRoofXf: { value: new THREE.Vector4() }, uSize: { value: new THREE.Vector2(1, 1) },
         uFrame: { value: 0 }, uShadowOn: { value: 0 }, uRoofOn: { value: 0 },
+        tNoise3D: { value: noise3D() }, uNoiseScale: { value: new THREE.Vector3(0.05, 0.08, 0.05) }, uWindOff: { value: new THREE.Vector3() },
+        uAmbCol: { value: new THREE.Color(0, 0, 0) }, uHetero: { value: 0.25 }, uExt: { value: 0.25 }, uMist: { value: 0 },
         uDebug: { value: 0 }, uDensity: { value: 0.007 }, uIndoor: { value: 3 }, uHeight: { value: 18 }, uGround: { value: 0 }, uMaxDist: { value: 45 },
       },
       vertexShader: VS, fragmentShader: FS, depthTest: false, depthWrite: false,
@@ -221,6 +273,14 @@ export class ScreenLighting {
     u.uHeight.value = v.height ?? 18;
     u.uMaxDist.value = v.maxDist ?? 45;
     u.uGround.value = map.bounds.minY ?? 0;
+    u.uHetero.value = v.hetero ?? 0.25;
+    u.uNoiseScale.value.fromArray(v.noiseScale || [0.05, 0.08, 0.05]);
+    u.uExt.value = v.ext ?? 0.25;
+    u.uMist.value = v.mist ?? 0;
+    const th = map.theme;
+    u.uAmbCol.value.set(th.hemi.sky).multiplyScalar(th.hemi.intensity * (v.amb ?? 0));
+    const w = th.weather?.wind || [0.6, 0.2];
+    this.wind = new THREE.Vector3(w[0], 0, w[1]);
     this.roofTex?.dispose();
     const t = makeRoofTexture(map);
     this.roofTex = t;
@@ -240,6 +300,9 @@ export class ScreenLighting {
     u.uCamWorld.value.copy(camera.matrixWorld);
     camera.getWorldPosition(u.uCamPos.value);
     u.uFrame.value = frame % 64;
+    // the noise drifts with the wind
+    const t = performance.now() / 1000;
+    if (this.wind) u.uWindOff.value.set(-this.wind.x * t, 0, -this.wind.z * t).multiply(u.uNoiseScale.value);
     const sun = this.sun;
     if (sun) {
       u.uSunDir.value.copy(sun.position).sub(sun.target.position).normalize();
