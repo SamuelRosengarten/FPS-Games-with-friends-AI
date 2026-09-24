@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { hash2 } from '../shared/constants.js';
 import { Skyline } from './skyline.js';
 import { Builder, bakedMaterial, superEllipsoid, weldNormals, SURF } from './surface.js';
+import { buildProps } from './props.js';
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
@@ -416,6 +417,7 @@ export class Decor {
       ['containers', () => this.buildContainers()],
       ['crates', () => this.buildCrateTrim()],
       ['trucks', () => this.buildTrucks()],
+      ['props', () => buildProps(this)],
       ['wallProps', () => cfg.wallProps && this.buildWallProps(cfg.wallProps)],
       ['clutter', () => cfg.clutter && this.buildClutter(cfg.clutter)],
       ['flags', () => cfg.flags && this.buildFlags(cfg.flags)],

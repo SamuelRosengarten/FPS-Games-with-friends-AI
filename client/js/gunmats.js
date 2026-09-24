@@ -99,8 +99,8 @@ export function gunMaps() {
       const wear = fbm(u, v, 4, 4, 11);
       const i = y * SIZE + x;
       mh[i] = brush * 0.25 + wear * 0.15;
-      mr[i] = 0.3 + brush * 0.18 + (wear > 0.62 ? -0.12 : 0.05);
-      ma[i] = 0.9 + wear * 0.1 + brush * 0.05 + (wear > 0.66 ? 0.12 : 0);
+      mr[i] = 0.3 + brush * 0.16 + (wear > 0.62 ? -0.04 : 0.02);
+      ma[i] = 0.95 + wear * 0.05 + brush * 0.03 + (wear > 0.66 ? 0.04 : 0);
     }
   }
   // scratches
@@ -110,7 +110,7 @@ export function gunMaps() {
     for (let s = 0; s < len; s++) {
       const xi = ((Math.round(x) % SIZE) + SIZE) % SIZE, yi = ((Math.round(y) % SIZE) + SIZE) % SIZE;
       const i = yi * SIZE + xi;
-      mh[i] -= 0.25; mr[i] -= 0.1; ma[i] += 0.25;
+      mh[i] -= 0.25; mr[i] -= 0.1; ma[i] += 0.12;
       x += Math.cos(a); y += Math.sin(a);
     }
   }
@@ -131,13 +131,15 @@ export function gunMaps() {
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
       const u = x / SIZE, v = y / SIZE;
-      const warp = fbm(u, v, 3, 2, 31) * 3;
-      const ring = 0.5 + 0.5 * Math.sin((v * 18 + warp) * Math.PI * 2);
-      const pores = vnoise(u * 90, v * 12, 90, 33);
+      // growth rings stretched along U (the part's length), warped, plus long fibre streaks and pores
+      const warp = fbm(u, v, 3, 2, 31) * 0.7;
+      const ring = Math.pow(0.5 + 0.5 * Math.sin((v * 5 + warp) * Math.PI * 2), 2.2);
+      const streak = vnoise(u * 3, v * 48, 48, 35);
+      const pores = vnoise(u * 90, v * 14, 90, 33);
       const i = y * SIZE + x;
-      wa[i] = 0.62 + ring * 0.32 - pores * 0.08;
-      wh[i] = ring * 0.3 + pores * 0.2;
-      wr[i] = 0.42 + ring * 0.12 + pores * 0.1;
+      wa[i] = 0.72 + ring * 0.16 + streak * 0.14 - pores * 0.07;
+      wh[i] = ring * 0.18 + streak * 0.12 + pores * 0.22;
+      wr[i] = 0.44 + ring * 0.08 + pores * 0.12;
     }
   }
   // ---- rubber grip: raised diamond knurling

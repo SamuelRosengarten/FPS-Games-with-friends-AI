@@ -121,6 +121,17 @@ if (view === 'vm') {
   if (q.get('walk')) window.__players.forEach((m, i) => { for (let k = 0; k < +(q.get('walk')) + i * 7; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y, pitch: 0, crouch: 0, lean: 0, speed: +(q.get('speed') || 5.5), vx: -Math.sin(m.root.rotation.y) * +(q.get('speed') || 5.5), vz: -Math.cos(m.root.rotation.y) * +(q.get('speed') || 5.5), onGround: true }, 0.016); });
   if (q.get('reload')) window.__players.forEach((m) => { for (let k = 0; k < 20; k++) m.update({ x: m.root.position.x, y: 0, z: 0, yaw: m.root.rotation.y, pitch: 0, crouch: 0, lean: 0, speed: 0, onGround: true, reloading: true }, 0.016); });
   label.textContent = 'player models';
+} else if (view === 'gun') {
+  // one weapon close up, side on: /dev/?view=gun&w=ak&side=l&cam=dist,height,yaw
+  const m = createWeaponModel(q.get('w') || 'ar');
+  const len = WEAPONS[q.get('w') || 'ar']?.model?.len || 0.5;
+  m.position.set(len * 0.3, 1.2, 0);
+  m.rotation.y = q.get('side') === 'l' ? -Math.PI / 2 : Math.PI / 2;
+  g.scene.add(m);
+  const [dist, hy, yaw] = (q.get('cam') || `${len * 1.05 + 0.15},0.03,0`).split(',').map(Number);
+  g.camera.position.set(Math.sin(yaw) * dist, 1.2 + hy, Math.cos(yaw) * dist);
+  g.camera.lookAt(0, 1.2, 0);
+  label.textContent = `weapon: ${q.get('w') || 'ar'}`;
 } else {
   const ids = Object.keys(WEAPONS);
   ids.forEach((id, i) => {

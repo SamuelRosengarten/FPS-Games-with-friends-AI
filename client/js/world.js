@@ -1,6 +1,7 @@
 // Builds renderable meshes for a map: merged static geometry per material, breakable panels, lights, markings.
 
 import * as THREE from 'three';
+import { PROP_KINDS } from '../shared/maps/builder.js';
 const ZERO_SCALE = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const STRIPS = [0, 0.35, 1.1, 2.4];
@@ -65,7 +66,7 @@ export class WorldView {
     for (const b of map.boxes) {
       if (b.destructible) continue;
       if (b.kind === 'barrel') { barrels.push(b); continue; }
-      if (b.kind === 'truck') continue; // modelled by the decor (body on a chassis with wheels)
+      if (b.kind === 'truck' || b.kind === 'furn' || PROP_KINDS.has(b.kind)) continue; // modelled by the decor / props.js
       if (b.kind === 'ground') { this.buildGround(push(b.mat), b); continue; }
       const buf = push(b.mat);
       // sandbag walls are dressed with individual bags by the decor; keep only a core to fill the gaps
