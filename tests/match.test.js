@@ -228,3 +228,23 @@ test('weather: host setting reaches the match, random resolves, fog limits bot s
   assert.ok(seen.size >= 3);
   assert.equal(resolveWeather('storm'), 'storm');
 });
+
+test('night: time setting resolves per map, darkness limits sight, flashlights show in snapshots', async () => {
+  const { resolveTime, NIGHT_SIGHT, FLAG } = await import('../shared/constants.js');
+  assert.equal(resolveTime('day', { night: true }), 'day');
+  assert.equal(resolveTime('auto', { night: true }), 'night');
+  assert.equal(resolveTime('auto', {}), 'day');
+  const { g, c } = setup({ mode: 'tdm', map: 'arena', fillBots: 1, time: 'night' });
+  assert.equal(g.settings.time, 'night');
+  g.startMatch();
+  assert.equal(g.match.night, true);
+  assert.equal(c.last('match').night, true);
+  assert.ok(g.match.sightRange <= NIGHT_SIGHT);
+  g.run(6);
+  const bots = [...g.players.values()].filter((p) => p.bot && p.alive);
+  assert.ok(bots.length && bots.every((b) => b.light), 'bots use flashlights at night');
+  const snap = c.all('s').pop();
+  assert.ok(snap, 'got a snapshot');
+  const lit = snap.p.filter((r) => r[8] & FLAG.LIGHT);
+  assert.ok(lit.length > 0, 'lit players flagged in snapshots');
+});

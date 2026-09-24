@@ -18,6 +18,7 @@ import { ViewModel } from './viewmodel.js';
 import { PlayerModel, teamLook, weaponTemplate, bakedWeapon } from './models.js';
 import { Radar, esc } from './hud.js';
 import { Weather, weatherTheme } from './weather.js';
+import { Flashlights, nightTheme } from './night.js';
 
 const SURFACE_IDX = { stone: 0, wood: 1, metal: 2, sand: 3 };
 const tmpV = new THREE.Vector3();
@@ -53,6 +54,10 @@ export class ClientGame {
     this.map = loadMap(msg.map);
     this.weatherId = msg.weather || 'clear';
     this.map.theme = weatherTheme(this.map.theme, this.weatherId); // before the environment is set up
+    this.night = !!msg.night;
+    if (this.night) this.map.theme = nightTheme(this.map.theme);
+    this.lightOn = true;
+    this.lightHintUntil = performance.now() + 25000;
     this.world = new PhysicsWorld(this.map.boxes, this.map.bounds);
     if (!this.tex || this.tex.quality !== this.g.quality) {
       this.tex = new TextureLibrary(this.g.renderer, this.g.quality);
@@ -60,7 +65,7 @@ export class ClientGame {
     }
     const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', 'metal', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
     const t0 = performance.now();
-    const wx = this.weatherId !== 'clear' && WEATHER[this.weatherId] ? ` · ${WEATHER[this.weatherId].name}` : '';
+    const wx = (this.weatherId !== 'clear' && WEATHER[this.weatherId] ? ` · ${WEATHER[this.weatherId].name}` : '') + (this.night ? ' · Night' : '');
     await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}${wx}… ${Math.round(f * 100)}%`; });
     const t1 = performance.now();
     this.g.setupEnvironment(this.map);
@@ -75,6 +80,9 @@ export class ClientGame {
     this.effects.setAmbient(this.map.theme.motes);
     this.weatherFx = this.weatherFx || new Weather(this.g, this.audio);
     this.weatherFx.setup(this.map, this.world);
+    this.torches = this.torches || new Flashlights(this.g, this.audio);
+    const wcfg = this.map.theme.weather;
+    this.torches.setup(this.night, this.world, wcfg ? (wcfg.id === 'fog' ? 1.6 : wcfg.rain > 0 ? 1 : 0.3) : 0);
     this.audio.isOutdoor = (pos) => !this.worldView.roofedAt(pos[0], pos[2], pos[1] + 0.5);
     this.effects.onCasingBounce = (p, big) => this.audio.casing(p, big);
     this.audio.occlusion = (pos) => {
@@ -155,6 +163,7 @@ export class ClientGame {
     this.decor?.dispose();
     this.effects?.dispose();
     this.weatherFx?.dispose();
+    this.torches?.dispose();
     this.g.setHurt(0);
     for (const p of this.players.values()) this.g.scene.remove(p.model.root);
     this.players.clear();
@@ -792,6 +801,7 @@ export class ClientGame {
       if (inp.pressed('lastWeapon')) this.switchTo(this.hasSlot(w.lastSlot) ? w.lastSlot : me.inv.primary ? 'primary' : 'secondary');
       if (inp.pressed('drop')) this.net.send({ t: 'drop' });
       if (inp.pressed('inspect')) this.viewmodel.inspect();
+      if (inp.pressed('flashlight') && this.night) { this.lightOn = !this.lightOn; this.torches?.toggleSound(); }
       if (inp.pressed('walkToggle')) this.walkToggle = !this.walkToggle;
     }
 
@@ -1087,6 +1097,7 @@ export class ClientGame {
       t: 'in', tp: this.tpId, p: [r3(me.x), r3(me.y), r3(me.z)], v: [r3(me.vx), r3(me.vy), r3(me.vz)],
       yaw: r3(me.yaw), pitch: r3(me.pitch), c: Math.round(me.crouch * 100) / 100, l: Math.round(me.lean * 100) / 100,
       g: me.onGround ? 1 : 0, w: me.walking ? 1 : 0, a: this.w.ads > 0.5 || this.w.scope > 0 ? 1 : 0,
+      fl: this.night && this.lightOn ? 1 : 0,
     });
   }
 
@@ -1339,6 +1350,7 @@ export class ClientGame {
     this.viewmodel.setVisible(vmVisible);
     this.g.setViewmodelLight(indoor);
     this.weatherFx?.update(dt, indoor);
+    this.updateTorches(dt);
     // the BodyCam view is a very wide fisheye lens (the lens pass squeezes the edges back in)
     const targetFov = this.bodycam ? 118 : this.settings.fov;
     this.curZoom = this.curZoom ? lerp(this.curZoom, zoom, Math.min(1, dt * 18)) : zoom;
@@ -1352,6 +1364,25 @@ export class ClientGame {
   }
 
   get bodycam() { return this.settings.viewStyle === 'bodycam'; }
+
+  // Flashlights at night: ours (or the spectated player's) from the camera, everyone else's from their gun.
+  updateTorches(dt) {
+    const T = this.torches;
+    if (!T?.active) return;
+    const me = this.me;
+    let local = null, skip = null;
+    if (me.alive) local = { on: this.lightOn, yaw: me.yaw + this.w.punchYaw, pitch: me.pitch + this.w.punchPitch };
+    else if (this.specId != null) {
+      const sp = this.players.get(this.specId);
+      if (sp?.state) { local = { on: !!(sp.state.flags & FLAG.LIGHT), yaw: sp.state.yaw, pitch: sp.state.pitch }; skip = sp; }
+    }
+    const remotes = [];
+    for (const rp of this.players.values()) {
+      if (rp === skip || !rp.alive || !rp.state || !(rp.state.flags & FLAG.LIGHT) || !rp.model.root.visible) continue;
+      remotes.push({ pos: rp.model.muzzleWorld(new THREE.Vector3()), yaw: rp.state.yaw, pitch: rp.state.pitch, id: rp.id });
+    }
+    T.update(dt, local, remotes);
+  }
 
   // A body-worn camera sits on the chest: each step bounces and rocks it, it rolls into turns and drifts
   // with breathing. Only tiny rotations, so the centre of the screen still matches where bullets go.
@@ -1466,6 +1497,7 @@ export class ClientGame {
       else if (this.canBuy() && !this.modeInfo.economy && this.mode !== 'gungame') hint = `Press <b>${this.keyName('buy')}</b> to choose your loadout`;
       if (me.inv.bomb && !ut && this.phase === 'live' && this.mode === 'defuse') hint = hint || 'You have the bomb — plant it at site <b>A</b> or <b>B</b>';
     }
+    if (!hint && this.night && me.alive && performance.now() < (this.lightHintUntil || 0)) hint = `Night: press <b>${this.keyName('flashlight')}</b> to switch your flashlight ${this.lightOn ? 'off' : 'on'}`;
     hud.hint(hint);
     // progress bar
     if (this.progress) {

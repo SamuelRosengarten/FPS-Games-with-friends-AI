@@ -11,7 +11,7 @@
 //   navigation (smoothed path following, unsticking, spacing from teammates) and crosshair placement
 //     while moving (pre-aiming corners and known enemy positions at head height).
 
-import { TEAM, DEG, clamp, viewDir, wrapAngle, PLAYER } from '../shared/constants.js';
+import { TEAM, DEG, clamp, viewDir, wrapAngle, PLAYER, NIGHT_LIT_SIGHT } from '../shared/constants.js';
 import { WEAPONS, GRENADES, computeSpread, applySpread, recoilOffset } from '../shared/weapons.js';
 import { eyePosition, heightFor } from '../shared/physics.js';
 import { inZone } from '../shared/maps/builder.js';
@@ -193,7 +193,8 @@ export class BotBrain {
       const H = heightFor(q.crouch);
       const dx = q.x - eye[0], dz = q.z - eye[2];
       const dist = Math.hypot(dx, dz);
-      if (dist > (m.sightRange || 110)) continue; // fog / rain limit how far anyone can see
+      // fog / rain / darkness limit how far anyone can see; a lit flashlight gives its carrier away
+      if (dist > (q.light && m.night ? NIGHT_LIT_SIGHT : (m.sightRange || 110))) continue;
       const cosA = (dx * f[0] + dz * f[2]) / (dist || 1);
       // things right in front of you, or someone you're already fighting, are noticed more easily
       const tracked = q === this.target || (this.mem.get(q.id)?.seen && now - this.mem.get(q.id).t < 1500);
