@@ -14,18 +14,20 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { TemporalPass, OverlayMSAAPass } from './temporal.js';
 import { ScreenLighting } from './lighting.js';
 import { ExposurePass } from './exposure.js';
+import { LensPass } from './lens.js';
 import { ROOM_BOUNCE } from './textures.js';
 
 // targetMP: megapixels the preset aims to render at the start (dynamic resolution then probes up/down)
 // ao: false | 'half' (0.6x resolution) | 'full' · aa: none | fxaa | smaa | msaa | taa (temporal, with upscaling)
 // vol: volumetric light march steps (0 = off) · ssr: screen-space reflections · adapt: eye adaptation
+// flare: lens flare strength in the normal view (the BodyCam view always has a strong one)
 // (volumetric light and reflections need temporal AA to smooth their noise)
 export const PRESETS = {
-  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false,  bloom: false, aa: 'none', env: 0.5, particles: 0.5, targetMP: 1.2, grade: false, probe: 128, vol: 0, ssr: false, adapt: false },
-  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false,  bloom: false, aa: 'fxaa', env: 0.45, particles: 0.75, targetMP: 2.2, grade: true, probe: 128, vol: 0, ssr: false, adapt: false },
-  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false,  bloom: true,  aa: 'smaa', env: 0.45, particles: 1, targetMP: 3.5, grade: true, probe: 128, vol: 0, ssr: false, adapt: true },
-  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: 'half', bloom: true,  aa: 'taa', env: 0.5, particles: 1, targetMP: 3.7, grade: true, probe: 256, vol: 10, ssr: false, adapt: true },
-  epic:   { label: 'Epic (RTX)', pixelRatio: 2.0, shadows: 8192, ao: 'full', bloom: true, aa: 'taa', env: 0.5, particles: 1, targetMP: 4.2, grade: true, probe: 512, vol: 16, ssr: true, adapt: true },
+  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false,  bloom: false, aa: 'none', env: 0.5, particles: 0.5, targetMP: 1.2, grade: false, probe: 128, vol: 0, ssr: false, adapt: false, flare: 0 },
+  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false,  bloom: false, aa: 'fxaa', env: 0.45, particles: 0.75, targetMP: 2.2, grade: true, probe: 128, vol: 0, ssr: false, adapt: false, flare: 0 },
+  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false,  bloom: true,  aa: 'smaa', env: 0.45, particles: 1, targetMP: 3.5, grade: true, probe: 128, vol: 0, ssr: false, adapt: true, flare: 0.3 },
+  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: 'half', bloom: true,  aa: 'taa', env: 0.5, particles: 1, targetMP: 3.7, grade: true, probe: 256, vol: 10, ssr: false, adapt: true, flare: 0.35 },
+  epic:   { label: 'Epic (RTX)', pixelRatio: 2.0, shadows: 8192, ao: 'full', bloom: true, aa: 'taa', env: 0.5, particles: 1, targetMP: 4.2, grade: true, probe: 512, vol: 16, ssr: true, adapt: true, flare: 0.35 },
 };
 
 // Internal render scale of each upscaling mode (temporal anti-aliasing only).
@@ -222,6 +224,12 @@ export function detectQuality(renderer) {
   return 'high';
 }
 
+const _q = new THREE.Quaternion();
+const _e = new THREE.Euler();
+const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _c = new THREE.Color();
+
 export class Graphics {
   constructor(container, settings) {
     this.s = settings;
@@ -251,6 +259,9 @@ export class Graphics {
     this.temporal = null;
 
     this.renderScale = 1;
+    this.bodycam = settings.viewStyle === 'bodycam';
+    this.prevCamQ = new THREE.Quaternion();
+    this.camDelta = new THREE.Vector2();
     this.frameEma = 16.7;
     this.slowTime = 0;
     this.fastTime = 0;
@@ -400,13 +411,16 @@ export class Graphics {
     composer.addPass(this.overlay);
     this.exposure = null;
     if (p.adapt && this.s.eyeAdaptation !== false) {
-      this.exposure = new ExposurePass();
+      // body cameras adapt harder and later: windows blow out indoors, rooms go murky outdoors
+      this.exposure = new ExposurePass(this.bodycam ? { strength: 0.8, min: 0.6, max: 2.6, up: 0.7, down: 1.6 } : {});
       this.exposure.setKey(0.18 * (this.map?.theme.adaptKey ?? 1));
       composer.addPass(this.exposure);
     }
     this.bloom = null;
     if (p.bloom && this.feature('bloom')) {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.5, 0.92);
+      this.bloom = this.bodycam
+        ? new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.65, 0.78)
+        : new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.5, 0.92);
       composer.addPass(this.bloom);
     }
     composer.addPass(new OutputPass());
@@ -417,6 +431,16 @@ export class Graphics {
       this.grade.uniforms.uSharpen.value = this.sharpenAmount();
       if (this.gradeCfg) this.applyGrade(this.gradeCfg);
       composer.addPass(this.grade);
+    }
+    this.lens = null;
+    const blur = this.bodycam || !!this.s.motionBlur;
+    if (this.bodycam || blur || p.flare > 0) {
+      this.lens = new LensPass({ blur });
+      const u = this.lens.mat.uniforms;
+      u.uBody.value = this.bodycam ? 1 : 0;
+      u.uK.value = this.bodycam ? 0.1 : 0;
+      u.uFlare.value = this.bodycam ? 1 : p.flare;
+      composer.addPass(this.lens);
     }
     const aa = this.aa === 'msaa' && !msaa ? 'fxaa' : this.aa;
     if (aa === 'smaa') composer.addPass(new SMAAPass());
@@ -447,6 +471,7 @@ export class Graphics {
   // Horizontal FOV defined at 16:9, converted to the vertical FOV three.js uses.
   setFov(hfov16x9, zoom = 1) {
     this.baseFov = hfov16x9;
+    this.zoom = zoom;
     const v = 2 * Math.atan(Math.tan((hfov16x9 * Math.PI) / 360) / (16 / 9));
     const vz = 2 * Math.atan(Math.tan(v / 2) * zoom);
     const deg = (vz * 180) / Math.PI;
@@ -584,7 +609,49 @@ export class Graphics {
       this.sky.material.uniforms.uTime.value += dt * (this.map?.theme.cloudSpeed ?? 1);
       this.sky.position.copy(this.camera.position);
     }
+    if (this.lens) this.updateLens(dt);
     this.composer.render(dt);
+  }
+
+  // Switch between the normal view and the BodyCam view (fisheye body-worn camera).
+  setViewStyle(style) {
+    const on = style === 'bodycam';
+    if (on === this.bodycam) return;
+    this.bodycam = on;
+    this.buildComposer();
+    this.resize();
+    this.exposure?.reset();
+  }
+
+  updateLens(dt) {
+    const u = this.lens.mat.uniforms;
+    const cam = this.camera;
+    u.uTime.value = (u.uTime.value + dt) % 1000;
+    // camera rotation since last frame -> motion blur over a 1/60 s shutter, and rolling-shutter skew
+    const q = cam.quaternion;
+    const dq = _q.copy(this.prevCamQ).invert().multiply(q);
+    this.prevCamQ.copy(q);
+    const e = _e.setFromQuaternion(dq, 'YXZ');
+    const hfov = 2 * Math.atan(Math.tan((this.vfovRad || 1.2) / 2) * cam.aspect);
+    const k = dt > 0 ? Math.min(1, (1 / 60) / dt) : 0;
+    let bx = (e.y / hfov) * k, by = (-e.x / (this.vfovRad || 1.2)) * k;
+    const len = Math.hypot(bx, by);
+    if (len > 0.08) { bx *= 0.08 / len; by *= 0.08 / len; } // big snaps (respawn, spectating) aren't a pan
+    if (len > 0.3) { bx = 0; by = 0; }
+    this.camDelta.set(bx, by);
+    u.uBlur.value.set(bx, by).multiplyScalar(this.bodycam ? 1 : 0.7);
+    u.uRoll.value = this.bodycam ? bx * 0.35 : 0;
+    // looking through a scope: no fisheye inside it
+    const z = this.zoom ?? 1;
+    u.uK.value = this.bodycam ? 0.1 * Math.min(1, Math.max(0, (z - 0.45) / 0.25)) : 0;
+    // sun position on screen
+    const dir = _v.copy(this.sun.position).sub(this.sun.target.position).normalize();
+    const fwd = _v2.set(0, 0, -1).applyQuaternion(q);
+    if (dir.dot(fwd) > 0.05) {
+      const p = _v2.copy(cam.position).addScaledVector(dir, 1000).project(cam);
+      u.uSun.value.set(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5, Math.abs(p.x) < 1.3 && Math.abs(p.y) < 1.3 ? 1 : 0);
+      u.uSunCol.value.copy(this.sun.color).lerp(_c.setRGB(1, 0.85, 0.65), 0.5);
+    } else u.uSun.value.z = 0;
   }
 
   updateDynamicRes(dt) {

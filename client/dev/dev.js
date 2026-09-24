@@ -15,7 +15,8 @@ import { Weather, weatherTheme } from '../js/weather.js';
 
 const q = new URLSearchParams(location.search);
 const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false, aa: q.get('aa') || 'auto', upscaling: q.get('up') || 'native',
-  volumetrics: q.get('vol') !== '0', reflections: q.get('ssr') !== '0', eyeAdaptation: q.get('adapt') !== '0' };
+  volumetrics: q.get('vol') !== '0', reflections: q.get('ssr') !== '0', eyeAdaptation: q.get('adapt') !== '0',
+  viewStyle: q.get('style') || 'standard', motionBlur: q.get('blur') === '1' };
 const g = new Graphics(document.getElementById('wrap'), settings);
 const map = getMap(q.get('map') || 'sandstone');
 if (q.get('weather')) map.theme = weatherTheme(map.theme, q.get('weather'));
@@ -123,7 +124,7 @@ if (view === 'vm') {
   g.camera.lookAt(wc[3], wc[4], wc[5]);
   label.textContent = 'weapons';
 }
-g.setFov(settings.fov);
+g.setFov(settings.viewStyle === 'bodycam' ? 118 : settings.fov);
 let t = 0;
 function loop() {
   const dt = 1 / 60;
@@ -131,7 +132,8 @@ function loop() {
   if (window.__fx) window.__fx.update(dt, performance.now());
   if (window.__decor) window.__decor.update(dt, t);
   if (window.__weather) window.__weather.update(dt, 0);
-  if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1, aimStyle: q.get('aim') || 'cs' });
+  const bc = settings.viewStyle === 'bodycam';
+  if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1, aimStyle: q.get('aim') || 'cs', offX: bc ? -0.1 : 0, offY: bc ? -0.035 : 0, bodycam: bc });
   g.render(dt);
   requestAnimationFrame(loop);
 }

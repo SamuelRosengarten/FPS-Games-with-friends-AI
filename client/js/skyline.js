@@ -13,6 +13,7 @@ import { hash2 } from '../shared/constants.js';
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
 const tmpS = new THREE.Vector3();
+const tmpC2 = new THREE.Color();
 const tmpP = new THREE.Vector3();
 const tmpN = new THREE.Vector3();
 const tmpC = new THREE.Color();
@@ -68,6 +69,33 @@ class Merge {
     const g = new THREE.CylinderGeometry(rTop, rBot, h, seg, 1, rTop <= 0.001);
     this.add(g, tmpP.set(x, y0 + h / 2, z).clone(), 0, tmpS.set(1, 1, 1).clone(), color);
     g.dispose();
+  }
+
+  // A conifer: trunk and three overlapping, slightly jagged tiers of foliage, darker lower down and
+  // inside (reads as a spruce / fir silhouette instead of a single cone).
+  conifer(h, x, y0, z, color, rand) {
+    this.cyl(h * 0.018, h * 0.03, h * 0.3, x, y0, z, tmpC2.setRGB(0.22, 0.17, 0.12), 5);
+    const tiers = 3 + (rand() < 0.4 ? 1 : 0);
+    for (let i = 0; i < tiers; i++) {
+      const f = i / (tiers - 1);
+      const base = y0 + h * (0.16 + f * 0.56);
+      const th = h * (0.46 - f * 0.18);
+      const r = h * (0.27 - f * 0.15) * (0.85 + rand() * 0.3);
+      const g = new THREE.CylinderGeometry(0.01, r, th, 9, 1, true);
+      const p = g.attributes.position;
+      // ragged hem: the lower rim zig-zags up and down
+      for (let v = 0; v < p.count; v++) {
+        if (p.getY(v) < 0) {
+          const k = 1 + (v % 2 ? 0.18 : -0.12) + (rand() - 0.5) * 0.2;
+          p.setX(v, p.getX(v) * k); p.setZ(v, p.getZ(v) * k);
+          p.setY(v, p.getY(v) - (v % 2 ? th * 0.1 : 0));
+        }
+      }
+      g.computeVertexNormals();
+      const c = tmpC2.copy(color).multiplyScalar(0.7 + f * 0.35);
+      this.add(g, tmpP.set(x + (rand() - 0.5) * r * 0.15, base + th / 2, z + (rand() - 0.5) * r * 0.15).clone(), rand() * 6.28, tmpS.set(1, 1, 1).clone(), c.clone());
+      g.dispose();
+    }
   }
 
   dome(r, x, y0, z, color, seg = 12) {
@@ -313,7 +341,9 @@ export class Skyline {
         if (n[1] < 0.55) continue;
         const h = o.trees.h[0] + r() * (o.trees.h[1] - o.trees.h[0]);
         const tc = new THREE.Color(o.trees.color).multiplyScalar(0.8 + r() * 0.35);
-        this.solid.cyl(0.05, h * 0.28, h, v.x + (r() - 0.5) * 4, v.y + 0.3, v.z + (r() - 0.5) * 4, tc, 6);
+        const tx = v.x + (r() - 0.5) * 4, tz = v.z + (r() - 0.5) * 4;
+        if (o.trees.kind === 'shrub') this.solid.cyl(0.05, h * 0.28, h, tx, v.y + 0.3, tz, tc, 6);
+        else this.solid.conifer(h, tx, v.y + 0.1, tz, tc, r);
       }
     }
   }
@@ -371,7 +401,7 @@ export class Skyline {
     (y) => {
       const band = Math.sin(y * 0.55) * 0.5 + 0.5;
       return tmpC.copy(rockDark).lerp(y > 30 ? rockLight : rock, Math.min(1, y / 18)).lerp(rockLight, band * 0.18);
-    }, 220, { seed: 5, trees: { count: 90, color: 0x6a6a3a, h: [2, 4], upTo: 0.25 } });
+    }, 220, { seed: 5, trees: { count: 90, color: 0x6a6a3a, h: [2, 4], upTo: 0.25, kind: 'shrub' } });
   }
 
   industrial() {

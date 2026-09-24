@@ -28,6 +28,16 @@ export class AudioEngine {
     this.comp.attack.value = 0.003;
     this.comp.release.value = 0.2;
     this.master.connect(this.muffle).connect(this.comp).connect(ctx.destination);
+    // body-camera microphone (BodyCam view): thin, band-limited, with loud sounds clipping
+    this.bcHp = ctx.createBiquadFilter(); this.bcHp.type = 'highpass'; this.bcHp.frequency.value = 170;
+    this.bcLp = ctx.createBiquadFilter(); this.bcLp.type = 'lowpass'; this.bcLp.frequency.value = 7200;
+    this.bcMid = ctx.createBiquadFilter(); this.bcMid.type = 'peaking'; this.bcMid.frequency.value = 2400; this.bcMid.gain.value = 4;
+    this.bcClip = ctx.createWaveShaper();
+    const curve = new Float32Array(1024);
+    for (let i = 0; i < curve.length; i++) { const x = (i / (curve.length - 1)) * 2 - 1; curve[i] = Math.tanh(x * 2.2) / Math.tanh(2.2); }
+    this.bcClip.curve = curve;
+    this.bcHp.connect(this.bcMid).connect(this.bcLp).connect(this.bcClip).connect(this.muffle);
+    if (this.bodycamMic) this.setBodycam(true);
     this.sfx = ctx.createGain();
     this.sfx.connect(this.master);
     this.ui = ctx.createGain();
@@ -57,6 +67,13 @@ export class AudioEngine {
     if (ctx.listener.positionX) {
       ctx.listener.positionX.value = 0;
     }
+  }
+
+  setBodycam(on) {
+    this.bodycamMic = on;
+    if (!this.ctx) return;
+    this.master.disconnect();
+    this.master.connect(on ? this.bcHp : this.muffle);
   }
 
   applyVolume() {

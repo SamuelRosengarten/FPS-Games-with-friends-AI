@@ -167,6 +167,7 @@ export class ClientGame {
     this.audio.stopAmbient();
     this.hud.show(false);
     this.hud.scope(false);
+    document.body.classList.remove('bodycam');
     this.viewmodel?.setVisible(false);
   }
 
@@ -1294,6 +1295,7 @@ export class ClientGame {
       const eye = eyePosition(me);
       cam.position.set(eye[0], eye[1] + this.stepSmooth, eye[2]);
       cam.rotation.set(me.pitch + ws.punchPitch + shy, me.yaw + ws.punchYaw + shx, -me.lean * 0.13);
+      if (this.bodycam) this.bodycamMotion(dt, look);
       zoom = this.currentZoom();
       const wd = WEAPONS[this.curItemId()];
       const scoped = wd?.scope && ws.scope > 0;
@@ -1302,7 +1304,8 @@ export class ClientGame {
       this.viewmodel.update({
         dt, speed: this.lastMoveSpeed, onGround: me.onGround, crouch: me.crouch, ads: ws.ads, bob: this.settings.bob,
         lookDX: look.dx, lookDY: look.dy, lower: this.progress ? 1 : 0,
-        aimStyle: this.settings.aimStyle, offX: (this.settings.vmX || 0) / 100, offY: (this.settings.vmY || 0) / 100,
+        aimStyle: this.settings.aimStyle, offX: (this.settings.vmX || 0) / 100 + (this.bodycam ? -0.1 : 0), offY: (this.settings.vmY || 0) / 100 + (this.bodycam ? -0.035 : 0),
+        bodycam: this.bodycam,
       });
       indoor = this.worldView.roofedAt(me.x, me.z, me.y + 1) ? 1 : 0;
     } else {
@@ -1336,7 +1339,8 @@ export class ClientGame {
     this.viewmodel.setVisible(vmVisible);
     this.g.setViewmodelLight(indoor);
     this.weatherFx?.update(dt, indoor);
-    const targetFov = this.settings.fov;
+    // the BodyCam view is a very wide fisheye lens (the lens pass squeezes the edges back in)
+    const targetFov = this.bodycam ? 118 : this.settings.fov;
     this.curZoom = this.curZoom ? lerp(this.curZoom, zoom, Math.min(1, dt * 18)) : zoom;
     if (Math.abs(this.curZoom - zoom) < 0.002) this.curZoom = zoom;
     this.g.setFov(targetFov, this.curZoom);
@@ -1345,6 +1349,50 @@ export class ClientGame {
     // audio listener
     const fwd = tmpV.set(0, 0, -1).applyQuaternion(cam.quaternion);
     this.audio.setListener([cam.position.x, cam.position.y, cam.position.z], [fwd.x, fwd.y, fwd.z]);
+  }
+
+  get bodycam() { return this.settings.viewStyle === 'bodycam'; }
+
+  // A body-worn camera sits on the chest: each step bounces and rocks it, it rolls into turns and drifts
+  // with breathing. Only tiny rotations, so the centre of the screen still matches where bullets go.
+  bodycamMotion(dt, look) {
+    const cam = this.g.camera, me = this.me;
+    const bc = this.bc || (this.bc = { phase: 0, roll: 0, amp: 0, t: 0 });
+    bc.t += dt;
+    const sp = me.onGround ? Math.min(1.3, this.lastMoveSpeed / 5.5) : 0;
+    bc.amp += (sp - bc.amp) * Math.min(1, dt * 6);
+    bc.phase += dt * (5 + this.lastMoveSpeed * 1.4);
+    const ads = this.w.ads;
+    const a = bc.amp * (1 - ads * 0.55) * (0.4 + 0.6 * (this.settings.bob ?? 1));
+    const step = Math.abs(Math.cos(bc.phase));
+    const side = Math.sin(bc.phase);
+    cam.position.y += (0.012 - step * 0.032) * a;
+    cam.position.x += Math.cos(me.yaw) * side * 0.02 * a;
+    cam.position.z -= Math.sin(me.yaw) * side * 0.02 * a;
+    const turn = clamp(-(look?.dx || 0) * 1.4, -0.05, 0.05);
+    bc.roll += (turn - bc.roll) * Math.min(1, dt * 5);
+    const t = bc.t, calm = 1 - ads * 0.7;
+    cam.rotation.z += bc.roll + side * 0.016 * a + Math.sin(t * 0.7) * 0.004 * calm;
+    cam.rotation.x += (Math.sin(t * 1.3) * 0.0022 + Math.sin(t * 3.1 + 1) * 0.0008) * calm + step * 0.004 * a;
+    cam.rotation.y += (Math.sin(t * 0.9 + 2) * 0.0018 + Math.sin(t * 2.3) * 0.0007) * calm;
+  }
+
+  // Timestamp overlay of the BodyCam view (date, time in UTC, device and unit).
+  updateBodycamOsd() {
+    const el = this.osd || (this.osd = document.getElementById('bodycam-osd'));
+    if (!el) return;
+    const on = this.bodycam;
+    if (el.hidden === on) el.hidden = !on;
+    document.body.classList.toggle('bodycam', on);
+    if (!on) return;
+    const d = new Date();
+    const sec = Math.floor(d.getTime() / 1000);
+    if (sec === this.osdSec) return;
+    this.osdSec = sec;
+    const p = (n) => String(n).padStart(2, '0');
+    el.querySelector('.l1').textContent = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}Z`;
+    const unit = ((this.myId || 1) * 2654435761 >>> 0).toString(16).toUpperCase().padStart(8, '0').slice(0, 7);
+    el.querySelector('.l2').textContent = `BODY 3  X${unit}`;
   }
 
   // ------------------------------------------------------------------ HUD
@@ -1362,7 +1410,9 @@ export class ClientGame {
       const sp = computeSpread(wd, { speed: this.lastMoveSpeed, onGround: me.onGround, crouch: me.crouch, ads: this.w.ads, scoped: false, bloom: this.w.bloom });
       spreadPx = (Math.tan(sp * DEG) / Math.tan((this.g.vfovRad || 1.2) / 2)) * (window.innerHeight / 2) * 0.9;
     }
+    if (this.bodycam) { chVisible = chVisible && this.settings.bodycamCrosshair; spreadPx *= 1.42; } // no crosshair on body cameras; the lens magnifies the centre
     hud.crosshair(chVisible && (this.settings.aimStyle !== 'ads' || this.w.ads < 0.8), Math.min(60, spreadPx));
+    this.updateBodycamOsd();
     hud.vitals(me.hp, me.armor, me.helmet, me.kit, me.inv.bomb);
     // low-health desaturation + red vignette, with a short flash on every hit taken
     this.hurtFlash = Math.max(0, (this.hurtFlash || 0) - dt * 1.8);

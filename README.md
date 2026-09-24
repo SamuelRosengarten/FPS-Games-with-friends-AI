@@ -163,6 +163,15 @@ wooden wall and hold **F**). Only a breach charge opens a reinforced wall.
 
 ---
 
+## BodyCam view
+
+*Settings → Game → Camera style → BodyCam* turns your view into a body-worn camera, like the game *Bodycam*:
+a very wide fisheye lens with barrel distortion and colour fringing, a camera on your chest that bounces with every
+step and rolls into turns, a cheap sensor's look (flat colours, blown-out highlights, noise in the dark, over-sharpened
+edges, heavy vignette), motion blur and rolling-shutter skew when you turn fast, harsh auto-exposure and lens flares,
+a thin clipping microphone sound, and a REC timestamp overlay. The gun is held low in the centre and there is no
+crosshair (switch it back on with *Crosshair in BodyCam view*). Scoped weapons show the scope without the fisheye.
+
 ## Graphics & performance
 
 Open **Settings → Video**:
@@ -192,6 +201,7 @@ Open **Settings → Video**:
 - Friends on older laptops can pick **High**, **Medium** or **Low**.
 - If your GPU still can't hold 60 FPS at the lowest resolution, the game switches off the most expensive effects one by one
   (ambient occlusion, bloom, shadow resolution) and tells you in the FPS line.
+- **Lens flare** when you look towards the sun (High and up) and optional **Motion blur** when turning.
 - Turn on **Show FPS counter** to see FPS, preset, resolution (internal → output with TAA), draw calls, CPU time and ping.
 
 Browser tips: use an up-to-date **Chrome or Edge** with hardware acceleration enabled. On laptops with both Intel/AMD
