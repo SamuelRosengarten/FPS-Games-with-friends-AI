@@ -123,7 +123,7 @@ function loop() {
   t += dt;
   if (window.__fx) window.__fx.update(dt, performance.now());
   if (window.__decor) window.__decor.update(dt, t);
-  if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1 });
+  if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1, aimStyle: q.get('aim') || 'cs' });
   g.render(dt);
   requestAnimationFrame(loop);
 }

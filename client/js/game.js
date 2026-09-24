@@ -1293,6 +1293,7 @@ export class ClientGame {
       this.viewmodel.update({
         dt, speed: this.lastMoveSpeed, onGround: me.onGround, crouch: me.crouch, ads: ws.ads, bob: this.settings.bob,
         lookDX: look.dx, lookDY: look.dy, lower: this.progress ? 1 : 0,
+        aimStyle: this.settings.aimStyle, offX: (this.settings.vmX || 0) / 100, offY: (this.settings.vmY || 0) / 100,
       });
       indoor = this.worldView.roofedAt(me.x, me.z, me.y + 1) ? 1 : 0;
     } else {
@@ -1303,7 +1304,7 @@ export class ClientGame {
         cam.position.set(eye[0], eye[1], eye[2]);
         cam.rotation.set(s.pitch, s.yaw, -s.lean * 0.13);
         if ((s.w || 'knife') !== this.viewmodel.id) this.viewmodel.setWeapon(s.w || 'knife', 0.2);
-        this.viewmodel.update({ dt, speed: s.speed || 0, onGround: s.onGround, crouch: s.crouch, ads: 0, lookDX: 0, lookDY: 0, lower: s.planting || s.defusing ? 1 : 0 });
+        this.viewmodel.update({ dt, speed: s.speed || 0, onGround: s.onGround, crouch: s.crouch, ads: 0, lookDX: 0, lookDY: 0, lower: s.planting || s.defusing ? 1 : 0, offX: (this.settings.vmX || 0) / 100, offY: (this.settings.vmY || 0) / 100 });
         vmVisible = true;
         const w = WEAPONS[s.w];
         this.hud.spectate(`Spectating <b>${esc(spec.name)}</b> · ${s.hp} HP · ${esc(w?.short || '')}<small>Fire / Aim: switch player</small>`);
@@ -1351,7 +1352,7 @@ export class ClientGame {
       const sp = computeSpread(wd, { speed: this.lastMoveSpeed, onGround: me.onGround, crouch: me.crouch, ads: this.w.ads, scoped: false, bloom: this.w.bloom });
       spreadPx = (Math.tan(sp * DEG) / Math.tan((this.g.vfovRad || 1.2) / 2)) * (window.innerHeight / 2) * 0.9;
     }
-    hud.crosshair(chVisible && this.w.ads < 0.8, Math.min(60, spreadPx));
+    hud.crosshair(chVisible && (this.settings.aimStyle !== 'ads' || this.w.ads < 0.8), Math.min(60, spreadPx));
     hud.vitals(me.hp, me.armor, me.helmet, me.kit, me.inv.bomb);
     // low-health desaturation + red vignette, with a short flash on every hit taken
     this.hurtFlash = Math.max(0, (this.hurtFlash || 0) - dt * 1.8);

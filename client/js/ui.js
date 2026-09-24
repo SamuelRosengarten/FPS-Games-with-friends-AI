@@ -256,6 +256,9 @@ export class UI {
         slider('fov', 'Field of view', 70, 120, 1, (v) => `${v}°`, 'Horizontal at 16:9');
         slider('viewmodelFov', 'Weapon FOV', 50, 90, 1, (v) => `${v}°`);
         slider('bob', 'View bob', 0, 1.5, 0.05, (v) => (+v).toFixed(2));
+        select('aimStyle', 'Right-click aim', [['cs', 'Zoom, gun stays on the side (CS2)'], ['ads', 'Aim down the sights']], 'Snipers always use the scope');
+        slider('vmX', 'Weapon position: sideways', -4, 4, 0.5, (v) => `${v > 0 ? '+' : ''}${v} cm`, 'Positive moves the gun further right');
+        slider('vmY', 'Weapon position: height', -4, 4, 0.5, (v) => `${v > 0 ? '+' : ''}${v} cm`, 'Negative moves the gun lower');
         check('toggleAds', 'Toggle aim (instead of hold)');
         check('toggleLean', 'Toggle lean (instead of hold)');
         break;

@@ -23,6 +23,9 @@ export const DEFAULTS = {
   fov: 100,              // horizontal FOV at 16:9
   viewmodelFov: 68,
   bob: 1,
+  aimStyle: 'cs',        // cs: zoom keeps the gun at the side (like CS2) | ads: aim down the sights
+  vmX: 0,                // weapon position offsets in cm (like viewmodel_offset_x / _y)
+  vmY: 0,
   // controller
   padSens: 1.0,
   padAdsSens: 0.55,
