@@ -9,14 +9,33 @@
 
 import * as THREE from 'three';
 
-// Frame index for the shadow filter's noise. With temporal anti-aliasing on, the renderer bumps it every
-// frame so the rotated Poisson pattern changes and the TAA history averages it into a smooth penumbra.
-// A plain {x, y} object is shared by reference when three.js clones the built-in material uniforms,
-// so one write reaches every lit material.
+// Per-frame values shared by every built-in material (a plain {x, y} object is shared by reference when
+// three.js clones the built-in material uniforms, so one write reaches all of them):
+//  x: frame index for the shadow filter's noise. With temporal anti-aliasing on, the renderer bumps it
+//     every frame so the rotated Poisson pattern changes and the TAA history averages it into a smooth
+//     penumbra.
+//  y: 1 while the main scene is drawn for screen-space reflections: opaque PBR materials then write
+//     1 - reflectivity into the colour alpha (see lighting.js).
 export const TAA_NOISE = { x: 0, y: 0 };
+const DECL = `
+#ifndef TAA_NOISE_DECL
+#define TAA_NOISE_DECL
+uniform vec2 uTaaNoise;
+#endif
+`;
 for (const lib of Object.values(THREE.ShaderLib)) {
-  if (lib.fragmentShader?.includes('#include <shadowmap_pars_fragment>')) lib.uniforms.uTaaNoise = { value: TAA_NOISE };
+  const fs = lib.fragmentShader || '';
+  if (fs.includes('#include <shadowmap_pars_fragment>') || fs.includes('#include <dithering_pars_fragment>')) lib.uniforms.uTaaNoise = { value: TAA_NOISE };
 }
+THREE.ShaderChunk.dithering_pars_fragment = `${THREE.ShaderChunk.dithering_pars_fragment}${DECL}`;
+// smoothness 0 at roughness 0.6 and above, 1 for a mirror
+THREE.ShaderChunk.opaque_fragment = `${THREE.ShaderChunk.opaque_fragment}
+#if defined( STANDARD ) && defined( OPAQUE )
+  if ( uTaaNoise.y > 0.5 ) {
+    float ssrS = clamp( ( 0.6 - material.roughness ) / 0.55, 0.0, 1.0 );
+    gl_FragColor.a = 1.0 - ssrS * ssrS;
+  }
+#endif`;
 
 const ORIGINAL = {
   fog_pars_vertex: THREE.ShaderChunk.fog_pars_vertex,
@@ -75,8 +94,7 @@ function patchShadows(o) {
   #define PCSS_FRUSTUM ${f(o.frustum)}
   #define PCSS_SUN_SIZE ${f(o.sunSize)}
   #define PCSS_TEXELS ${f(o.texels)}
-  uniform vec2 uTaaNoise;
-  const vec2 pcssDisk[24] = vec2[](
+${DECL}  const vec2 pcssDisk[24] = vec2[](
     vec2(-0.613, 0.617), vec2(0.171, -0.041), vec2(-0.299, 0.791), vec2(0.645, 0.493),
     vec2(-0.652, 0.718), vec2(0.422, -0.024), vec2(-0.108, -0.414), vec2(0.163, 0.891),
     vec2(-0.915, -0.221), vec2(0.505, -0.673), vec2(-0.263, -0.945), vec2(0.853, -0.217),

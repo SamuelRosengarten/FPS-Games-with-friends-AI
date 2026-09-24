@@ -177,6 +177,7 @@ export class TemporalPass extends Pass {
     this.needsSwap = true;
     this.scale = opts.scale ?? 1;   // internal / output resolution
     this.gtao = null;               // optional GTAOPass run at internal resolution
+    this.lighting = null;           // optional ScreenLighting (volumetric light, reflections)
     this.frame = 0;
     this.outW = 1; this.outH = 1;
     this.inW = 1; this.inH = 1;
@@ -220,6 +221,7 @@ export class TemporalPass extends Pass {
     this.sceneRT.setSize(this.inW, this.inH);
     this.aoRT.setSize(this.inW, this.inH);
     if (this.gtao) this.gtao.setSize(this.inW, this.inH);
+    if (this.lighting) this.lighting.setSize(this.inW, this.inH);
     if (changedOut) {
       for (const h2 of this.history) h2.setSize(this.outW, this.outH);
       this.historyValid = false;
@@ -263,8 +265,10 @@ export class TemporalPass extends Pass {
     renderer.autoClear = true;
     const fx = this.fxScene;
     if (fx) fx.visible = false;
+    TAA_NOISE.y = this.lighting?.ssr ? 1 : 0; // glossy materials write their reflectivity into alpha
     renderer.setRenderTarget(this.sceneRT);
     renderer.render(this.scene, cam);
+    TAA_NOISE.y = 0;
     if (fx) fx.visible = true;
     renderer.autoClear = false; // the full-screen passes below must not clear their targets
     let color = this.sceneRT.texture;
@@ -272,6 +276,7 @@ export class TemporalPass extends Pass {
       this.gtao.render(renderer, this.aoRT, this.sceneRT);
       color = this.aoRT.texture;
     }
+    if (this.lighting) color = this.lighting.render(renderer, cam, color, this.sceneRT.texture, this.sceneRT.depthTexture, this.frame);
     cam.updateProjectionMatrix(); // drop the jitter again
 
     // resolve into the next history buffer
@@ -316,7 +321,9 @@ export class TemporalPass extends Pass {
     this.depthMat.dispose();
     this.quad.dispose();
     this.gtao?.dispose();
+    this.lighting?.dispose();
     TAA_NOISE.x = 0;
+    TAA_NOISE.y = 0;
   }
 }
 

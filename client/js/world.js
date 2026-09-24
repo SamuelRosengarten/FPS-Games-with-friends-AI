@@ -82,7 +82,8 @@ export class WorldView {
       geo.setAttribute('position', new THREE.Float32BufferAttribute(buf.pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(buf.nor, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(buf.uv, 2));
-      geo.setAttribute('color', new THREE.Float32BufferAttribute(buf.col, 3));
+      // rgb: baked ambient occlusion · a: 1 outdoors, 0 indoors (gets the room bounce light, textures.js)
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(buf.col, 4));
       geo.setIndex(buf.idx);
       geo.computeBoundingSphere();
       const mesh = new THREE.Mesh(geo, this.tex.material(matName));
@@ -171,7 +172,7 @@ export class WorldView {
       let k = 1 - wall * 0.1;
       const open = 4 - wall;
       if (open > 0) k *= 1 - (roof / open) * 0.45;
-      return Math.max(0.35, k);
+      return [Math.max(0.35, k), open > 0 ? 1 - roof / open : 0];
     };
     // corner shades
     const shades = [];
@@ -184,8 +185,8 @@ export class WorldView {
         buf.pos.push(x, 0, z);
         buf.nor.push(0, 1, 0);
         buf.uv.push(x / scale, -z / scale);
-        const k = shades[r][c];
-        buf.col.push(k, k, k);
+        const [k, out] = shades[r][c];
+        buf.col.push(k, k, k, out);
       }
     }
     for (let r = 0; r < m.rows; r++) {
@@ -200,7 +201,7 @@ export class WorldView {
     const b0 = buf.pos.length / 3;
     const x0 = m.x0 - ext, x1 = m.x0 + m.cols * cs + ext, z0 = m.z0 - ext, z1 = m.z0 + m.rows * cs + ext;
     for (const [x, z] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) {
-      buf.pos.push(x, -0.02, z); buf.nor.push(0, 1, 0); buf.uv.push(x / scale, -z / scale); buf.col.push(0.9, 0.9, 0.9);
+      buf.pos.push(x, -0.02, z); buf.nor.push(0, 1, 0); buf.uv.push(x / scale, -z / scale); buf.col.push(0.9, 0.9, 0.9, 1);
     }
     buf.idx.push(b0, b0 + 2, b0 + 1, b0 + 1, b0 + 2, b0 + 3);
   }
@@ -263,7 +264,7 @@ export class WorldView {
       }
       buf.uv.push(u, v);
       const k = this.ambientAt(p[0], p[1], p[2], nx, ny, nz, kind, b.kind === 'slab' ? 0 : b.floorY || 0);
-      buf.col.push(k, k, k);
+      buf.col.push(k, k, k, this.roofedAt(p[0] + nx * 0.25, p[2] + nz * 0.25, p[1] - 0.01) ? 0 : 1);
     }
     buf.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }

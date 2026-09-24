@@ -12,15 +12,20 @@ import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { TemporalPass, OverlayMSAAPass } from './temporal.js';
+import { ScreenLighting } from './lighting.js';
+import { ExposurePass } from './exposure.js';
+import { ROOM_BOUNCE } from './textures.js';
 
 // targetMP: megapixels the preset aims to render at the start (dynamic resolution then probes up/down)
 // ao: false | 'half' (0.6x resolution) | 'full' · aa: none | fxaa | smaa | msaa | taa (temporal, with upscaling)
+// vol: volumetric light march steps (0 = off) · ssr: screen-space reflections · adapt: eye adaptation
+// (volumetric light and reflections need temporal AA to smooth their noise)
 export const PRESETS = {
-  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false,  bloom: false, aa: 'none', env: 0.5, particles: 0.5, targetMP: 1.2, grade: false, probe: 128 },
-  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false,  bloom: false, aa: 'fxaa', env: 0.45, particles: 0.75, targetMP: 2.2, grade: true, probe: 128 },
-  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false,  bloom: true,  aa: 'smaa', env: 0.45, particles: 1, targetMP: 3.5, grade: true, probe: 128 },
-  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: 'half', bloom: true,  aa: 'taa', env: 0.5, particles: 1, targetMP: 3.7, grade: true, probe: 256 },
-  epic:   { label: 'Epic (RTX)', pixelRatio: 2.0, shadows: 8192, ao: 'full', bloom: true, aa: 'taa', env: 0.5, particles: 1, targetMP: 4.2, grade: true, probe: 512 },
+  low:    { label: 'Low',    pixelRatio: 0.75, shadows: 0,    ao: false,  bloom: false, aa: 'none', env: 0.5, particles: 0.5, targetMP: 1.2, grade: false, probe: 128, vol: 0, ssr: false, adapt: false },
+  medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false,  bloom: false, aa: 'fxaa', env: 0.45, particles: 0.75, targetMP: 2.2, grade: true, probe: 128, vol: 0, ssr: false, adapt: false },
+  high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false,  bloom: true,  aa: 'smaa', env: 0.45, particles: 1, targetMP: 3.5, grade: true, probe: 128, vol: 0, ssr: false, adapt: true },
+  ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: 'half', bloom: true,  aa: 'taa', env: 0.5, particles: 1, targetMP: 3.7, grade: true, probe: 256, vol: 10, ssr: false, adapt: true },
+  epic:   { label: 'Epic (RTX)', pixelRatio: 2.0, shadows: 8192, ao: 'full', bloom: true, aa: 'taa', env: 0.5, particles: 1, targetMP: 4.2, grade: true, probe: 512, vol: 16, ssr: true, adapt: true },
 };
 
 // Internal render scale of each upscaling mode (temporal anti-aliasing only).
@@ -276,7 +281,7 @@ export class Graphics {
     const p = this.preset;
     this.aa = this.s.aa && this.s.aa !== 'auto' && AA_MODES[this.s.aa] ? this.s.aa : p.aa;
     // steps taken, in order, when even the minimum render scale can't hold 60 FPS
-    this.fallbacks = this.aa === 'msaa' ? ['ao', 'bloom', 'msaa', 'shadows'] : ['ao', 'bloom', 'shadows'];
+    this.fallbacks = this.aa === 'msaa' ? ['ao', 'bloom', 'msaa', 'shadows'] : this.aa === 'taa' ? ['ssr', 'volumetrics', 'ao', 'bloom', 'shadows'] : ['ao', 'bloom', 'shadows'];
     this.renderer.shadowMap.enabled = p.shadows > 0;
     this.sun.castShadow = p.shadows > 0;
     if (p.shadows) {
@@ -368,6 +373,12 @@ export class Graphics {
         temporal.gtao = gtao;
         this.gtao = gtao;
       }
+      const vol = this.s.volumetrics !== false && this.feature('volumetrics') ? p.vol : 0;
+      const ssr = p.ssr && this.s.reflections !== false && this.feature('ssr');
+      if (vol || ssr) {
+        temporal.lighting = new ScreenLighting({ volSteps: vol, ssr });
+        if (this.map) temporal.lighting.setMap(this.map, this.sun);
+      }
       composer.addPass(temporal);
       this.temporal = temporal;
       this.overlay = new OverlayMSAAPass(this.vmScene, this.vmCamera);
@@ -380,6 +391,11 @@ export class Graphics {
       this.overlay = new OverlayPass(this.vmScene, this.vmCamera);
     }
     composer.addPass(this.overlay);
+    this.exposure = null;
+    if (p.adapt && this.s.eyeAdaptation !== false) {
+      this.exposure = new ExposurePass();
+      composer.addPass(this.exposure);
+    }
     this.bloom = null;
     if (p.bloom && this.feature('bloom')) {
       this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.32, 0.5, 0.92);
@@ -496,10 +512,15 @@ export class Graphics {
     this.vmHemi.color.set(th.hemi.sky);
     this.vmHemi.groundColor.set(th.hemi.ground);
     this.vmSun.color.set(th.sun.color);
+    // indoor bounce light: sky light coming in through the openings, warmed by the sun-lit floor
+    ROOM_BOUNCE.value.set(th.hemi.sky).multiplyScalar(th.hemi.intensity).lerp(new THREE.Color(th.sun.color).multiplyScalar(th.sun.intensity * 0.3), 0.35)
+      .multiplyScalar(th.roomBounce ?? 0.6);
     this.themeHemi = th.hemi.intensity;
     this.themeSun = th.sun.intensity;
     this.applyGrade(th.grade || {});
     this.map = map;
+    this.temporal?.lighting?.setMap(map, this.sun);
+    this.exposure?.reset();
     applyAtmosphere(this, map, { pcss: this.pcss() });
   }
 

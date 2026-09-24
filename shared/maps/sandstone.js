@@ -26,6 +26,7 @@ export default {
     sun: { dir: [0.42, 0.72, 0.46], color: 0xfff0d6, intensity: 3.4 },
     hemi: { sky: 0xcfe2ff, ground: 0x9c7c55, intensity: 1.0 },
     exposure: 1.0,
+    volumetric: { density: 0.008 }, // dust in the air for volumetric sunlight (Ultra / Epic)
     ambientSound: 'wind',
   },
   carve(g) {
