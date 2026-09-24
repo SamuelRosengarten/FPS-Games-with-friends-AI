@@ -5,17 +5,19 @@ import { createWeaponModel } from './models.js';
 import { Builder, bakedMaterial, superEllipsoid, SURF } from './surface.js';
 import { WEAPONS } from '../shared/weapons.js';
 
+// Hip position: bottom-right of the screen like CS2, barrels angled only slightly inwards so the gun
+// stays out of the way of what you're looking at.
 const HIP = {
-  pistol: [0.145, -0.165, -0.44],
-  smg: [0.16, -0.18, -0.44],
-  rifle: [0.19, -0.2, -0.52],
-  shotgun: [0.19, -0.2, -0.52],
-  sniper: [0.19, -0.2, -0.52],
-  knife: [0.18, -0.19, -0.38],
-  grenade: [0.17, -0.18, -0.38],
+  pistol: [0.165, -0.18, -0.44],
+  smg: [0.2, -0.2, -0.45],
+  rifle: [0.235, -0.215, -0.52],
+  shotgun: [0.235, -0.215, -0.52],
+  sniper: [0.235, -0.215, -0.52],
+  knife: [0.2, -0.2, -0.38],
+  grenade: [0.19, -0.19, -0.38],
   bomb: [0.06, -0.23, -0.42],
 };
-const BASE_YAW = { pistol: 0.05, smg: 0.1, rifle: 0.13, shotgun: 0.13, sniper: 0.12, knife: 0, grenade: 0, bomb: 0 };
+const BASE_YAW = { pistol: 0.03, smg: 0.06, rifle: 0.07, shotgun: 0.07, sniper: 0.07, knife: 0, grenade: 0, bomb: 0 };
 const ADS_Z = { pistol: -0.42, smg: -0.42, rifle: -0.46, shotgun: -0.44, sniper: -0.4 };
 
 const ease = (t) => t * t * (3 - 2 * t);
@@ -322,12 +324,16 @@ export class ViewModel {
     this.t += dt;
     if (!this.current) return;
     const kind = this.kind;
-    const hip = HIP[kind] || HIP.rifle;
+    const h0 = HIP[kind] || HIP.rifle;
+    const hip = [h0[0] + (st.offX || 0), h0[1] + (st.offY || 0), h0[2]];
     const info = this.current.userData;
     const ads = st.ads || 0;
+    const sightsAim = st.aimStyle === 'ads';
     // the model hangs from its grip (see setWeapon), so the sight line sits at sightY - grip.y in holder space
     const grip = info.grip || [0, 0, 0];
-    const adsPos = [grip[0], grip[1] - (info.sightY || 0.08), ADS_Z[kind] ?? -0.3];
+    // CS2 style: zooming only settles the gun a little lower and closer, it stays on the side
+    const adsPos = sightsAim ? [grip[0], grip[1] - (info.sightY || 0.08), ADS_Z[kind] ?? -0.3] : [hip[0] - 0.01, hip[1] - 0.02, hip[2] + 0.04];
+    const yawK = sightsAim ? 1 - ads : 1 - ads * 0.3;
 
     // springs
     const k = 180, d = 22;
@@ -356,7 +362,7 @@ export class ViewModel {
     let py = hip[1] + (adsPos[1] - hip[1]) * ads + by + breathe - this.landDip + this.sway.y * 0.25 * (1 - ads * 0.7);
     let pz = hip[2] + (adsPos[2] - hip[2]) * ads + this.kick * (1 - ads * 0.4);
     let rx = this.kickRot * 0.09 + this.sway.y * 0.6 * (1 - ads * 0.6);
-    let ry = this.sway.x * 1.0 * (1 - ads * 0.6) + (BASE_YAW[kind] || 0) * (1 - ads);
+    let ry = this.sway.x * 1.0 * (1 - ads * 0.6) + (BASE_YAW[kind] || 0) * yawK;
     let rz = this.sway.x * 0.6 - (st.crouch || 0) * 0.04 * (1 - ads) + bx * 1.2;
 
     // deploy
@@ -452,7 +458,7 @@ export class ViewModel {
     }
 
     const stock = this.current.getObjectByName('stock');
-    if (stock) stock.visible = ads < 0.55;
+    if (stock) stock.visible = !sightsAim || ads < 0.55;
 
     this.holder.position.set(px, py, pz);
     this.holder.rotation.set(rx, ry, rz);
