@@ -377,11 +377,14 @@ export class Effects {
     this.world = null;
     const root = this.root = new THREE.Group();
     this.scene.add(root);
+    // unlit, fast-moving effects go to the fx scene (drawn after temporal AA so they stay crisp)
+    const fx = this.fx = new THREE.Group();
+    (graphics.fxScene || this.scene).add(fx);
     const soft = makeSoftSprite(64);
     this.smokeTex = makeSmokeSprite(128, 11);
-    this.sparks = new ParticleSystem(root, 1500, true, soft);
-    this.fire = new ParticleSystem(root, 300, true, this.smokeTex);
-    this.dust = new ParticleSystem(root, 2500, false, makeSmokeSprite(64, 7));
+    this.sparks = new ParticleSystem(fx, 1500, true, soft);
+    this.fire = new ParticleSystem(fx, 300, true, this.smokeTex);
+    this.dust = new ParticleSystem(fx, 2500, false, makeSmokeSprite(64, 7));
     this.holeTex = makeBulletHole(64);
 
     // tracers (one instanced draw)
@@ -394,7 +397,7 @@ export class Effects {
       this.tracerMesh.setMatrixAt(i, ZERO_M);
       this.tracers.push({ i, s: new THREE.Vector3(), e: new THREE.Vector3(), d: new THREE.Vector3(), q: new THREE.Quaternion(), len: 0, t: 0, active: false });
     }
-    root.add(this.tracerMesh);
+    fx.add(this.tracerMesh);
 
     // decals
     this.holes = new DecalPool(root, this.holeTex, 200);
@@ -443,7 +446,7 @@ export class Effects {
     for (let i = 0; i < 12; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.flashTex, color: new THREE.Color(5, 3.2, 1.2), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
       s.visible = false;
-      root.add(s);
+      fx.add(s);
       this.muzzles.push({ s, t: 0 });
     }
     this.muzzleIdx = 0;
@@ -456,13 +459,13 @@ export class Effects {
       const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 0.82, 0.7), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
       m.visible = false;
       m.userData.noAO = true;
-      root.add(m);
+      fx.add(m);
       this.rings.push({ m, t: 1 });
     }
 
     // smoke grenades
     this.smokes = new Map();
-    this.smokeField = new SmokeField(root, this.smokeTex, 520);
+    this.smokeField = new SmokeField(fx, this.smokeTex, 520);
 
     // ambient motes
     this.motes = null;
@@ -472,7 +475,7 @@ export class Effects {
 
   // theme.motes: { color, alpha, count, size } — floating dust in the air around the camera
   setAmbient(cfg) {
-    if (this.motes) { this.root.remove(this.motes); this.motes.geometry.dispose(); this.motes = null; }
+    if (this.motes) { this.fx.remove(this.motes); this.motes.geometry.dispose(); this.motes.material.dispose(); this.motes = null; }
     if (!cfg || this.q < 0.5) return;
     const count = Math.round((cfg.count ?? 500) * Math.min(1, this.q));
     const pos = new Float32Array(count * 3);
@@ -494,15 +497,17 @@ export class Effects {
     this.motes.frustumCulled = false;
     this.motes.renderOrder = 4;
     this.motes.userData.noAO = true;
-    this.root.add(this.motes);
+    this.fx.add(this.motes);
   }
 
   dispose() {
-    this.scene.remove(this.root);
-    this.root.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) o.material.dispose();
-    });
+    for (const g of [this.root, this.fx]) {
+      g.parent?.remove(g);
+      g.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) o.material.dispose();
+      });
+    }
     this.smokes.clear();
   }
 

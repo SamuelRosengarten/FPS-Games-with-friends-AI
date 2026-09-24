@@ -172,8 +172,9 @@ ui.on('fullscreen', () => toggleFullscreen());
 ui.on('gpuInfo', () => graphics.gpu);
 ui.on('qualityInfo', () => `Using: ${graphics.quality.toUpperCase()}`);
 ui.on('settings', (key) => {
-  if (['quality', 'all'].includes(key)) graphics.applyQuality();
-  if (['maxRenderScale', 'dynamicRes'].includes(key)) { graphics.renderScale = graphics.initialScale(); graphics.resize(); }
+  if (['quality', 'aa', 'all'].includes(key)) graphics.applyQuality();
+  if (['maxRenderScale', 'dynamicRes', 'upscaling'].includes(key)) { graphics.renderScale = graphics.initialScale(); graphics.resize(); }
+  if (['sharpness', 'all'].includes(key)) graphics.applySharpness();
   if (['volume', 'sfxVolume', 'uiVolume', 'all'].includes(key)) audio.applyVolume();
   if (['crosshair', 'all'].includes(key)) hud.applyCrosshair();
   if (['fov', 'all'].includes(key)) graphics.setFov(settings.fov);

@@ -1,8 +1,8 @@
 # BREACHPOINT
 
 A self-hosted, multiplayer tactical FPS for you and your friends — inspired by Counter-Strike 2 and Rainbow Six Siege.
-One friend runs the server, everyone else plays in the browser. Works on **MacBook (Apple Silicon M1–M4)** and **Windows PCs**,
-with **keyboard & mouse or a controller**.
+One friend runs the server, everyone else plays in the browser. Tuned for **Windows PCs with NVIDIA RTX graphics**
+(an RTX 3060 runs the top *Epic* preset), also runs on MacBooks and weaker PCs, with **keyboard & mouse or a controller**.
 
 - **4 game modes**: Defuse (round-based bomb plant/defuse with economy), Team Deathmatch, Free For All, Gun Game
 - **4 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls),
@@ -22,14 +22,15 @@ with **keyboard & mouse or a controller**.
   ballistic glasses, balaclavas and shemaghs, plate carriers with magazine / radio / admin pouches, battle belts,
   holsters, knee and elbow pads, gloves and boots — with camouflage, fabric weave, MOLLE webbing, skin, leather and
   rubber surface detail (Attackers in desert multicam, Defenders in navy)
-- **High-end graphics** (Ultra preset for M-series Pro/Max and RTX GPUs): 4K contact-hardening soft shadows (sharp at the
-  base, softer further from the caster), ambient light and reflections captured from each map (sunlit sand and walls
-  bounce warm light), aerial perspective (haze that glows towards the sun and thins with altitude), ambient occlusion (GTAO), bloom,
-  4× MSAA, physically based materials, sky lighting, per-map colour grading, a distant skyline around every map (desert town
+- **High-end graphics** (Epic preset for RTX 3060 and up): 8K contact-hardening soft shadows (sharp at the
+  base, softer further from the caster), temporal anti-aliasing with DLSS-style upscaling and supersampling modes,
+  full-resolution ambient occlusion (GTAO), 2048² textures on large surfaces, ambient light and reflections captured from
+  each map (sunlit sand and walls bounce warm light), aerial perspective (haze that glows towards the sun and thins with
+  altitude), bloom, physically based materials, sky lighting, per-map colour grading, a distant skyline around every map (desert town
   with mesas, factories with smoking stacks, a city of towers, forested hills), detailed map dressing (windows, palms and
   grass swaying in the wind, waving flags, a fountain, rooftop clutter, AC units, pipes, wires, graffiti, puddles, rocks,
   litter, pallets, tyres…), real stacked sandbags, oil drums, a box truck, shipping containers with door hardware,
-  parallax-mapped bricks, stone, tiles and planks with real depth on Ultra, detailed weapon models (extruded frames,
+  parallax-mapped bricks, stone, tiles and planks with real depth on Ultra and Epic, detailed weapon models (extruded frames,
   serrations, scopes) with wood grain, brushed/scratched metal and stippled polymer, gloved hands with real fingers,
   shell casings, blood
   splatter, fireballs, dust motes, and a dynamic-resolution system with automatic effect fallbacks that keeps you
@@ -159,17 +160,33 @@ wooden wall and hold **F**). Only a breach charge opens a reinforced wall.
 
 Open **Settings → Video**:
 
-- **Auto** picks a preset for your GPU. MacBook Pro M-series (Pro/Max) and RTX cards get **Ultra**:
-  native Retina resolution, 4096² soft shadows, GTAO ambient occlusion, bloom, 4× MSAA, 1024² PBR textures.
+- **Auto** picks a preset for your GPU. RTX 2060 / 3060 / 4060 and up (and Radeon RX 6700 / 7700 and up) get **Epic**:
+  8192² contact-hardening soft shadows, full-resolution GTAO ambient occlusion, temporal anti-aliasing, 2048² textures
+  on large surfaces (1024² elsewhere), 16× anisotropic filtering, a 512² environment probe and bloom.
+  Other RTX / recent Radeon cards get **Ultra** (4096² shadows, half-resolution AO, 1024² textures).
+- **Anti-aliasing**: *Temporal (TAA)* is the default on Ultra/Epic. The world is rendered with a tiny sub-pixel camera
+  shift every frame and combined with the previous frames, which removes jagged and shimmering edges better than MSAA.
+  Particles, smoke and tracers are drawn after it at full resolution, and your weapon is drawn on top with 4× MSAA, so
+  neither smears. MSAA 4×, SMAA and FXAA are still available.
+- **Upscaling** (with TAA) works like NVIDIA DLSS or AMD FSR 2, minus the AI part (browsers can't access DLSS):
+  - *Supersampling (150%)* renders more pixels than your screen has — the sharpest image. An RTX 3060 on a 1080p
+    monitor has room for it.
+  - *Native* (default, like DLAA) renders at your screen resolution.
+  - *Quality (67%)*, *Balanced (58%)* and *Performance (50%)* render fewer pixels and rebuild full resolution from
+    previous frames. Use *Quality* at 4K.
+  - *Sharpness* adjusts the sharpening applied afterwards.
 - **Dynamic resolution** (on by default) lowers the render resolution for a moment if the frame rate drops below 60 FPS
-  and restores it when there's headroom, so the game stays smooth. You can cap it with *Max render scale*.
+  and restores it when there's headroom, so the game stays smooth. With TAA it lowers the internal resolution only (the
+  screen stays at full resolution). You can cap it with *Max render scale*.
 - Friends on older laptops can pick **High**, **Medium** or **Low**.
 - If your GPU still can't hold 60 FPS at the lowest resolution, the game switches off the most expensive effects one by one
-  (ambient occlusion, bloom, MSAA, shadow resolution) and tells you in the FPS line.
-- Turn on **Show FPS counter** to see FPS, preset, resolution, draw calls, CPU time and ping.
+  (ambient occlusion, bloom, shadow resolution) and tells you in the FPS line.
+- Turn on **Show FPS counter** to see FPS, preset, resolution (internal → output with TAA), draw calls, CPU time and ping.
 
-Browser tips: use an up-to-date **Chrome, Edge or Safari** with hardware acceleration enabled. On a 120 Hz ProMotion
-MacBook, Chrome renders at 120 FPS. Use fullscreen (pause menu → *Toggle fullscreen*) for the best experience.
+Browser tips: use an up-to-date **Chrome or Edge** with hardware acceleration enabled. On laptops with both Intel/AMD
+and NVIDIA graphics, set the browser to *High performance* in *Windows Settings → System → Display → Graphics* so it
+runs on the RTX GPU (*Settings → Video* shows the detected GPU). Use fullscreen (pause menu →
+*Toggle fullscreen*) for the best experience.
 
 ---
 
@@ -197,8 +214,9 @@ node server/index.js [--port 3000] [--name "Sam's server"] [--password secret] [
 - **Ctrl+W closed my tab on Windows** — Ctrl is crouch by default and Ctrl+W is a browser shortcut. Use fullscreen mode
   (the game then captures the keyboard), or rebind crouch to C in *Settings → Keys*. The game also asks before leaving.
 - **Game version mismatch** — the host updated the game: refresh the page (Ctrl+F5 / Cmd+Shift+R).
-- **Low FPS** — lower the preset in *Settings → Video* and keep *Dynamic resolution* on. Make sure the browser uses the GPU
-  (chrome://gpu should show hardware acceleration).
+- **Low FPS** — set *Upscaling* to *Quality* or *Balanced*, or lower the preset in *Settings → Video*, and keep
+  *Dynamic resolution* on. Make sure the browser uses the GPU (chrome://gpu should show hardware acceleration, and
+  *Settings → Video → Detected GPU* should name your NVIDIA card).
 
 ---
 

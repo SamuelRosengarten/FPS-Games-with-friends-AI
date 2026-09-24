@@ -9,6 +9,15 @@
 
 import * as THREE from 'three';
 
+// Frame index for the shadow filter's noise. With temporal anti-aliasing on, the renderer bumps it every
+// frame so the rotated Poisson pattern changes and the TAA history averages it into a smooth penumbra.
+// A plain {x, y} object is shared by reference when three.js clones the built-in material uniforms,
+// so one write reaches every lit material.
+export const TAA_NOISE = { x: 0, y: 0 };
+for (const lib of Object.values(THREE.ShaderLib)) {
+  if (lib.fragmentShader?.includes('#include <shadowmap_pars_fragment>')) lib.uniforms.uTaaNoise = { value: TAA_NOISE };
+}
+
 const ORIGINAL = {
   fog_pars_vertex: THREE.ShaderChunk.fog_pars_vertex,
   fog_vertex: THREE.ShaderChunk.fog_vertex,
@@ -65,6 +74,8 @@ function patchShadows(o) {
   #define PCSS_DEPTH_RANGE ${f(o.depthRange)}
   #define PCSS_FRUSTUM ${f(o.frustum)}
   #define PCSS_SUN_SIZE ${f(o.sunSize)}
+  #define PCSS_TEXELS ${f(o.texels)}
+  uniform vec2 uTaaNoise;
   const vec2 pcssDisk[24] = vec2[](
     vec2(-0.613, 0.617), vec2(0.171, -0.041), vec2(-0.299, 0.791), vec2(0.645, 0.493),
     vec2(-0.652, 0.718), vec2(0.422, -0.024), vec2(-0.108, -0.414), vec2(0.163, 0.891),
@@ -75,10 +86,11 @@ function patchShadows(o) {
   );
   float pcssShadow( sampler2D shadowMap, vec2 shadowMapSize, vec3 coord ) {
     vec2 texel = 1.0 / shadowMapSize;
-    float ang = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) * 6.2831853;
+    float ang = fract( 52.9829189 * fract( dot( gl_FragCoord.xy + 5.588238 * uTaaNoise.x, vec2( 0.06711056, 0.00583715 ) ) ) ) * 6.2831853;
     mat2 rot = mat2( cos( ang ), sin( ang ), - sin( ang ), cos( ang ) );
     // blocker search over the region a sun-sized light could be hidden behind
-    float searchR = clamp( PCSS_SUN_SIZE * 12.0 / PCSS_FRUSTUM, 3.0 * texel.x, 16.0 * texel.x );
+    // (limits are in 4096-map texels, so a bigger map gives the same penumbra, only finer)
+    float searchR = clamp( PCSS_SUN_SIZE * 12.0 / PCSS_FRUSTUM, 3.0 * texel.x, 16.0 * PCSS_TEXELS * texel.x );
     float sum = 0.0, n = 0.0;
     for ( int i = 0; i < 12; i ++ ) {
       vec2 off = rot * pcssDisk[ i * 2 ] * searchR;
@@ -88,7 +100,7 @@ function patchShadows(o) {
     if ( n < 0.5 ) return 1.0;
     if ( n > 11.5 ) return 0.0; // the whole search region is behind a caster: deep shadow
     float blockerDist = ( coord.z - sum / n ) * PCSS_DEPTH_RANGE; // metres between caster and receiver
-    float r = clamp( blockerDist * PCSS_SUN_SIZE / PCSS_FRUSTUM, 1.3 * texel.x, 10.0 * texel.x );
+    float r = clamp( blockerDist * PCSS_SUN_SIZE / PCSS_FRUSTUM, 1.3 * texel.x, 10.0 * PCSS_TEXELS * texel.x );
     float lit = 0.0;
     for ( int i = 0; i < 24; i ++ ) lit += texture2DCompare( shadowMap, coord.xy + rot * pcssDisk[ i ] * r, coord.z );
     return lit / 24.0;
@@ -111,7 +123,8 @@ export function applyAtmosphere(graphics, map, { pcss }) {
   const sc = new THREE.Color(th.sun.color).multiplyScalar(0.45 * Math.min(1.5, (th.sun.intensity || 3) / 3));
   patchFog({ sunDir: [sd.x, sd.y, sd.z], sunCol: [sc.r, sc.g, sc.b], h0: 3, h1: th.fogHeight ?? 70, hMin: 0.45 });
   const cam = graphics.sun.shadow.camera;
-  patchShadows(pcss ? { depthRange: cam.far - cam.near, frustum: cam.right - cam.left, sunSize: th.sunSize ?? 0.025 } : null);
+  const texels = graphics.sun.shadow.mapSize.x / 4096;
+  patchShadows(pcss ? { depthRange: cam.far - cam.near, frustum: cam.right - cam.left, sunSize: th.sunSize ?? 0.025, texels } : null);
   for (const scene of [graphics.scene, graphics.vmScene]) {
     scene.traverse((o) => {
       if (!o.material) return;
