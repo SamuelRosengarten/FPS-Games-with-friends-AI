@@ -325,7 +325,9 @@ export class ViewModel {
     const hip = HIP[kind] || HIP.rifle;
     const info = this.current.userData;
     const ads = st.ads || 0;
-    const adsPos = [0, -(info.sightY || 0.08), ADS_Z[kind] ?? -0.3];
+    // the model hangs from its grip (see setWeapon), so the sight line sits at sightY - grip.y in holder space
+    const grip = info.grip || [0, 0, 0];
+    const adsPos = [grip[0], grip[1] - (info.sightY || 0.08), ADS_Z[kind] ?? -0.3];
 
     // springs
     const k = 180, d = 22;

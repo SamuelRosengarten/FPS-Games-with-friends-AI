@@ -188,7 +188,7 @@ function buildPistol(o) {
   mag.name = 'mag';
   mag.add(ext([[0.016, -0.1], [0.016, -0.112], [0.066, -0.114], [0.064, -0.1]], W * 0.92, M.polymer(), { bevel: 0.0015 }));
   g.add(mag);
-  return finish(g, { muzzle: [0, 0.052, -L + 0.022], eject: [0.02, 0.066, -0.04], sightY: top + 0.013, fore: [-0.012, -0.03, 0.02], grip: [0, -0.02, 0.02], kind: 'pistol' });
+  return finish(g, { muzzle: [0, 0.052, -L + 0.022], eject: [0.02, 0.066, -0.04], sightY: top + 0.0085, fore: [-0.012, -0.03, 0.02], grip: [0, -0.02, 0.02], kind: 'pistol' });
 }
 
 function buildSMG(o) {
@@ -213,12 +213,16 @@ function buildSMG(o) {
     g.add(cyl(0.0125, 0.03, dark, 0, 0.056, -0.265));
     for (let i = 0; i < 4; i++) g.add(box(0.004, 0.003, 0.022, M.color(0x050505, 0.2, 0.9), Math.cos(i * Math.PI / 2) * 0.012, 0.056 + Math.sin(i * Math.PI / 2) * 0.012, -0.268));
     g.add(ext([[-0.16, 0.093], [-0.16, 0.108], [-0.172, 0.108], [-0.176, 0.093]], 0.014, dark, { bevel: 0.001 }));
-    g.add(ext([[0.03, 0.093], [0.03, 0.11], [0.012, 0.11], [0.01, 0.093]], 0.022, dark, { bevel: 0.001 }));
+    g.add(box(0.022, 0.006, 0.018, dark, 0, 0.096, 0.02));
+    const peep = new THREE.Mesh(new THREE.TorusGeometry(0.0065, 0.0025, 6, 16), dark);
+    peep.position.set(0, 0.108, 0.02);
+    g.add(peep);
+    for (const sx of [-1, 1]) g.add(box(0.003, 0.012, 0.012, dark, sx * 0.009, 0.103, 0.02));
     for (const sx of [-1, 1]) stock.add(box(0.008, 0.008, 0.16, dark, sx * 0.014, 0.05, 0.12));
     stock.add(ext([[0.19, 0.075], [0.21, 0.075], [0.215, 0.0], [0.195, 0.0]], 0.046, M.rubber(), { bevel: 0.004 }));
     g.add(stock);
     g.add(mag);
-    return finish(g, { muzzle: [0, 0.056, -0.285], eject: [0.025, 0.07, -0.05], sightY: 0.112, fore: [0, -0.035, -0.15], grip: [0, -0.02, 0.015], kind: 'smg' });
+    return finish(g, { muzzle: [0, 0.056, -0.285], eject: [0.025, 0.07, -0.05], sightY: 0.108, fore: [0, -0.035, -0.15], grip: [0, -0.02, 0.015], kind: 'smg' });
   }
   // classic roller-delayed SMG: pressed receiver, cocking tube, slim handguard, curved magazine, drum rear sight
   g.add(ext([[0.08, 0.032], [0.08, 0.076], [-0.18, 0.076], [-0.19, 0.068], [-0.19, 0.03]], 0.04, body, { bevel: 0.004 }));
@@ -235,8 +239,10 @@ function buildSMG(o) {
   hood.rotation.y = Math.PI / 2;
   g.add(hood);
   g.add(box(0.0035, 0.012, 0.004, dark, 0, 0.094, -0.33));
-  g.add(cyl(0.012, 0.018, dark, 0, 0.092, 0.05, 'x', 12));
-  g.add(box(0.012, 0.012, 0.02, dark, 0, 0.08, 0.05));
+  const drum = new THREE.Mesh(new THREE.TorusGeometry(0.0065, 0.003, 6, 16), dark);
+  drum.position.set(0, 0.1, 0.05);
+  g.add(drum);
+  g.add(box(0.016, 0.014, 0.02, dark, 0, 0.087, 0.05));
   // trigger group with grip and guard
   g.add(ext([[0.06, 0.032], [-0.075, 0.032], [-0.075, 0.018], [-0.078, -0.016, -0.056, -0.022], [-0.02, -0.022], [-0.006, -0.02, 0.0, -0.01], [0.004, -0.04], [0.008, -0.052, 0.012, -0.06], [0.016, -0.1], [0.052, -0.1], [0.05, -0.05], [0.046, -0.01, 0.06, 0.032]], 0.036, poly, { holes: [[[-0.062, 0.008], [-0.064, -0.012, -0.05, -0.015], [-0.02, -0.015], [-0.01, -0.013, -0.01, -0.002], [-0.012, 0.008]]], bevel: 0.003 }));
   g.add(ext([[-0.034, 0.006], [-0.04, -0.004, -0.033, -0.012], [-0.029, -0.011], [-0.033, -0.003, -0.029, 0.006]], 0.005, M.steel(), { bevel: 0.001 }));
@@ -249,7 +255,7 @@ function buildSMG(o) {
   stock.add(ext([[0.27, 0.085], [0.29, 0.085], [0.3, 0.06, 0.29, 0.0], [0.27, 0.0], [0.278, 0.04, 0.27, 0.085]], 0.044, M.rubber(), { bevel: 0.004 }));
   g.add(stock);
   g.add(mag);
-  return finish(g, { muzzle: [0, 0.052, -0.44], eject: [0.025, 0.065, -0.1], sightY: 0.101, fore: [0, 0.01, -0.28], grip: [0, -0.02, 0.015], kind: 'smg' });
+  return finish(g, { muzzle: [0, 0.052, -0.44], eject: [0.025, 0.065, -0.1], sightY: 0.1, fore: [0, 0.01, -0.28], grip: [0, -0.02, 0.015], kind: 'smg' });
 }
 
 function buildRifle(o) {
@@ -286,9 +292,9 @@ function buildRifle(o) {
     add(cyl(0.013, 0.045, dark, 0, 0.055, -0.8));
     add(box(0.028, 0.012, 0.02, M.polymer(), 0, 0.066, -0.815), 0.5);
     // rear sight block and leaf
-    add(box(0.03, 0.018, 0.04, dark, 0, 0.09, -0.3));
-    add(box(0.024, 0.004, 0.06, dark, 0, 0.1, -0.27), -0.05);
-    add(box(0.005, 0.008, 0.004, dark, 0, 0.106, -0.245));
+    add(box(0.03, 0.016, 0.04, dark, 0, 0.088, -0.3));
+    add(box(0.024, 0.004, 0.06, dark, 0, 0.097, -0.27), -0.05);
+    for (const sx of [-1, 1]) add(box(0.007, 0.007, 0.004, dark, sx * 0.0065, 0.1015, -0.245)); // U-notch ears
     // trigger guard + trigger
     add(box(0.007, 0.004, 0.07, M.steel(), 0, -0.017, -0.03));
     add(box(0.007, 0.03, 0.005, M.steel(), 0, -0.004, -0.064));
@@ -325,7 +331,7 @@ function buildRifle(o) {
     stock.add(plate);
     g.add(stock);
     g.add(mag);
-    return finish(g, { muzzle: [0, 0.055, -0.83], eject: [0.03, 0.06, -0.08], sightY: 0.1, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
+    return finish(g, { muzzle: [0, 0.055, -0.83], eject: [0.03, 0.06, -0.08], sightY: 0.1005, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
   }
   // AR platform: upper/lower receivers, rails, M-LOK handguard, forward assist, buffer tube stock
   add(box(0.044, 0.05, 0.2, body, 0, 0.02, -0.07));
@@ -423,7 +429,7 @@ function buildShotgun(o) {
   stock.add(ext([[0.045, 0.072], [0.1, 0.068], [0.36, 0.058], [0.365, -0.07], [0.2, -0.045], [0.1, -0.012, 0.045, 0.012]], 0.044, wood, { bevel: 0.007 }));
   stock.add(ext([[0.362, 0.06], [0.382, 0.06], [0.387, -0.07], [0.367, -0.072]], 0.046, M.rubber(), { bevel: 0.004 }));
   g.add(stock);
-  return finish(g, { muzzle: [0, 0.062, -0.75], eject: [0.03, 0.058, -0.07], sightY: 0.085, fore: [0, 0.01, -0.4], grip: [0, -0.02, 0.05], kind: 'shotgun', pump: true });
+  return finish(g, { muzzle: [0, 0.062, -0.75], eject: [0.03, 0.058, -0.07], sightY: 0.084, fore: [0, 0.01, -0.4], grip: [0, -0.02, 0.05], kind: 'shotgun', pump: true });
 }
 
 function buildSniper(o) {
