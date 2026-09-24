@@ -8,8 +8,10 @@ One friend runs the server, everyone else plays in the browser. Tuned for **Wind
 - **4 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls),
   *Embassy* (two floors: atrium, balcony, inside and outside staircases), *Arena* (compact deathmatch)
 - **Weather**: clear, rain, thunderstorm or fog on any map (the host picks it, or *Random*). Rain falls around you and
-  stops under roofs, streets get wet and reflective, storms bring gusting wind, lightning and rolling thunder, and fog
-  hides players beyond about 40 metres — bots see less far in fog too, and rain masks footsteps
+  stops under roofs, drops splash on the ground, streets get wet and reflective with puddles rippling in the rain, and
+  footsteps splash outdoors. Storms bring gusting wind, rain curtains sweeping across the map, and lightning that lights
+  the scene with sharp shadows before the thunder rolls in. Fog drifts in banks and hides players beyond about 40
+  metres — bots see less far in fog too, and rain masks footsteps
 - **11 guns + knife + frag/flash/smoke grenades + breach charges**, learnable recoil patterns, movement/jump inaccuracy,
   aim-down-sights, sniper scopes, tagging (getting hit slows you down)
 - **R6-style destruction**: breakable wooden walls you can shoot or blow holes through, wall-banging, leaning (Q/E);

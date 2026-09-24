@@ -50,8 +50,8 @@ const SKY_VS = /* glsl */`
   }
 `;
 const SKY_FS = /* glsl */`
-  uniform vec3 uTop, uHorizon, uBottom, uSunDir, uSunColor, uCloudColor, uFogColor;
-  uniform float uCloudCover, uTime, uIntensity, uSunSize, uFogSky;
+  uniform vec3 uTop, uHorizon, uBottom, uSunDir, uSunColor, uCloudColor, uFogColor, uFlashDir;
+  uniform float uCloudCover, uTime, uIntensity, uSunSize, uFogSky, uFlash;
   varying vec3 vDir;
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float noise(vec2 p) {
@@ -83,6 +83,8 @@ const SKY_FS = /* glsl */`
     col += uSunColor * smoothstep(1.0 - uSunSize, 1.0 - uSunSize * 0.55, sd) * 14.0;
     // foggy / stormy weather: the sky fades into the fog, most of all near the horizon
     col = mix(col, uFogColor, uFogSky * (1.0 - 0.45 * smoothstep(0.0, 0.7, h)));
+    // lightning: the clouds light up around the strike
+    if (uFlash > 0.0) col += vec3(0.75, 0.82, 1.0) * uFlash * (0.15 + 1.4 * pow(max(dot(d, uFlashDir), 0.0), 3.0));
     gl_FragColor = vec4(col * uIntensity, 1.0);
   }
 `;
@@ -99,6 +101,7 @@ function makeSky(theme, radius) {
       uSunColor: { value: lin(theme.sun.color).multiplyScalar(theme.sunDisc ?? 1) },
       uFogColor: { value: lin(theme.fog) },
       uFogSky: { value: theme.fogSky ?? 0 },
+      uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) },
       uCloudColor: { value: lin(theme.cloudColor ?? 0xffffff) },
       uCloudCover: { value: theme.cloudCover ?? 0.4 },
       uTime: { value: 0 },
@@ -578,7 +581,7 @@ export class Graphics {
     this.updateDynamicRes(dt);
     if (this.grade) this.grade.uniforms.uTime.value += dt;
     if (this.sky) {
-      this.sky.material.uniforms.uTime.value += dt;
+      this.sky.material.uniforms.uTime.value += dt * (this.map?.theme.cloudSpeed ?? 1);
       this.sky.position.copy(this.camera.position);
     }
     this.composer.render(dt);

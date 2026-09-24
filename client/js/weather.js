@@ -12,7 +12,7 @@
 
 import * as THREE from 'three';
 import { makeRoofTexture, roofTransform } from './lighting.js';
-import { WETNESS } from './textures.js';
+import { WETNESS, RAIN_FX } from './textures.js';
 import { WIND } from './decor.js';
 
 const lerpHex = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
@@ -24,7 +24,8 @@ const LOOKS = {
     sky: [0x5d6875, 0x8b949c, 0x6a6e70], cloud: 0x9ba2a9, cloudCover: 0.97, fogSky: 0.35,
     fog: [0x8c959c, 0.8], fogNear: 18, fogFar: 150, fogHeight: 60, fogMin: 0.82,
     exposure: 1.15, adaptKey: 0.55, sat: 0.78, contrast: 0.96, gain: [0.97, 1.0, 1.04],
-    vol: 0.012, rain: 1, wet: 1, wind: [1.2, 0.4], windSway: 1.4, lightning: false,
+    vol: { density: 0.009, hetero: 0.6, noiseScale: [0.045, 0.02, 0.045], amb: 0.35, ext: 1, mist: 0.8 }, clouds: 1.8,
+    rain: 1, wet: 1, wind: [1.2, 0.4], windSway: 1.4, lightning: false,
   },
   storm: {
     sun: 0.09, sunTint: [0xa8b4c4, 0.7], sunDisc: 0, sunSize: 0.14,
@@ -32,7 +33,8 @@ const LOOKS = {
     sky: [0x363e48, 0x5f6770, 0x45484b], cloud: 0x6a7179, cloudCover: 1, fogSky: 0.5,
     fog: [0x68707a, 0.85], fogNear: 12, fogFar: 108, fogHeight: 55, fogMin: 0.92,
     exposure: 1.25, adaptKey: 0.35, sat: 0.68, contrast: 1.0, gain: [0.95, 0.99, 1.06],
-    vol: 0.014, rain: 1.9, wet: 1, wind: [4.2, 1.6], windSway: 2.4, lightning: true,
+    vol: { density: 0.011, hetero: 0.7, noiseScale: [0.04, 0.018, 0.04], amb: 0.3, ext: 1, mist: 1.4 }, clouds: 4,
+    rain: 1.9, wet: 1, wind: [4.2, 1.6], windSway: 2.4, lightning: true,
   },
   fog: {
     sun: 0.42, sunTint: [0xe8e4dc, 0.5], sunDisc: 0.22, sunSize: 0.08,
@@ -40,7 +42,8 @@ const LOOKS = {
     sky: [0xa9afb4, 0xc3c6c6, 0xb0b2b0], cloud: 0xc8cbcc, cloudCover: 0.9, fogSky: 0.9,
     fog: [0xb8bcbc, 0.8], fogNear: 2, fogFar: 58, fogHeight: 26, fogMin: 0.97,
     exposure: 1.05, adaptKey: 0.9, sat: 0.84, contrast: 0.92, gain: [1.0, 1.0, 1.01],
-    vol: 0.03, rain: 0, wet: 0.35, wind: [0.4, 0.1], windSway: 0.6, lightning: false,
+    vol: { density: 0.018, hetero: 0.85, noiseScale: [0.035, 0.09, 0.035], amb: 0.5, ext: 1, mist: 0.5 }, clouds: 0.6,
+    rain: 0, wet: 0.35, wind: [0.6, 0.2], windSway: 0.6, lightning: false,
   },
 };
 
@@ -62,6 +65,7 @@ export function weatherTheme(base, weather) {
     skyTop: L.sky[0], skyHorizon: L.sky[1], skyBottom: L.sky[2],
     cloudColor: L.cloud, cloudCover: L.cloudCover, fogSky: L.fogSky,
     fog: lerpHex(base.fog, L.fog[0], L.fog[1]), fogNear: L.fogNear, fogFar: L.fogFar, fogHeight: L.fogHeight, fogMin: L.fogMin,
+    skylineFogNear: base.fogNear, skylineFogFar: base.fogFar,
     exposure: (base.exposure ?? 1) * L.exposure,
     adaptKey: L.adaptKey, // storms are meant to look dark: the eye adapts less
     grade: {
@@ -70,7 +74,8 @@ export function weatherTheme(base, weather) {
       contrast: (g.contrast ?? 1.05) * L.contrast,
       gain: (g.gain || [1, 1, 1]).map((v, i) => v * L.gain[i]),
     },
-    volumetric: { ...(base.volumetric || {}), density: L.vol },
+    volumetric: { ...(base.volumetric || {}), ...L.vol }, // drifting fog banks / rain curtains (Ultra, Epic)
+    cloudSpeed: L.clouds,
     motes: L.rain ? null : base.motes,
     weather: { id: weather, rain: L.rain, wet: L.wet, wind: L.wind, windSway: L.windSway, lightning: L.lightning },
   };
@@ -88,7 +93,9 @@ const RAIN_VS = /* glsl */`
   varying vec2 vUv;
   #include <fog_pars_vertex>
   void main() {
-    vec3 vel = uVel * (0.8 + 0.4 * aSeed.w);
+    // bigger drops fall faster, look longer and catch more light
+    float size = aSeed.w;
+    vec3 vel = uVel * (0.8 + 0.4 * size);
     vec3 p = aSeed.xyz * uBox + vel * uTime;
     p = uCam + mod(p - uCam + uBox * 0.5, uBox) - uBox * 0.5; // wrap into the box around the camera
     float hide = p.y < -0.3 ? 1.0 : 0.0;
@@ -101,10 +108,12 @@ const RAIN_VS = /* glsl */`
     float dist = length(toCam);
     vec3 side = normalize(cross(dir, toCam / max(dist, 1e-3)));
     // streaks thinner than ~1.3 px are drawn 1.3 px wide and fainter instead (no shimmering)
-    float px = uWidth * uPx / max(dist, 0.1);
-    float w = uWidth * max(1.0, 1.3 / max(px, 1e-3));
-    vA = (1.0 - hide) * min(1.0, px / 1.3 + 0.25) * smoothstep(0.3, 1.2, dist);
-    vec3 pos = p + side * position.x * w + dir * position.y * uLen;
+    float width = uWidth * (0.6 + 0.8 * size);
+    float px = width * uPx / max(dist, 0.1);
+    float w = width * max(1.0, 1.3 / max(px, 1e-3));
+    float glint = 0.55 + 0.9 * fract(size * 7.13 + aSeed.x * 3.1);
+    vA = (1.0 - hide) * min(1.0, px / 1.3 + 0.25) * smoothstep(0.3, 1.2, dist) * glint;
+    vec3 pos = p + side * position.x * w + dir * position.y * uLen * (0.7 + 0.6 * size);
     vUv = position.xy;
     vec4 mvPosition = viewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mvPosition;
@@ -192,6 +201,48 @@ const RIPPLE_FS = /* glsl */`
   }
 `;
 
+// A crown of droplets thrown up where a drop hits hard ground (camera-facing).
+const CROWN_VS = /* glsl */`
+  uniform float uTime;
+  attribute vec4 aData;
+  varying float vAge, vSeed;
+  varying vec2 vUv;
+  #include <fog_pars_vertex>
+  void main() {
+    vAge = clamp((uTime - aData.w) / 0.3, 0.0, 1.0);
+    vSeed = fract(aData.x * 13.13 + aData.z * 7.71);
+    vec3 c = aData.xyz;
+    vec3 toCam = normalize(cameraPosition - c);
+    vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam));
+    vec3 p = c + right * position.x * 0.07 + vec3(0.0, (position.y * 0.5 + 0.5) * 0.08, 0.0);
+    vUv = vec2(position.x, position.y * 0.5 + 0.5);
+    vec4 mvPosition = viewMatrix * vec4(p, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    if (vAge >= 1.0 || length(cameraPosition - c) > 9.0) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+    #include <fog_vertex>
+  }
+`;
+const CROWN_FS = /* glsl */`
+  uniform vec3 uColor;
+  varying float vAge, vSeed;
+  varying vec2 vUv;
+  #include <fog_pars_fragment>
+  void main() {
+    float a = 0.0;
+    for (int i = 0; i < 6; i++) {
+      float fi = float(i);
+      float spread = (fract(vSeed * 5.3 + fi * 0.618) * 2.0 - 1.0) * 0.9;
+      float up = 0.45 + 0.55 * fract(vSeed * 9.1 + fi * 0.37);
+      vec2 d = vec2(spread * vAge, up * 3.6 * vAge * (1.0 - vAge));
+      a += smoothstep(0.1, 0.03, length((vUv - d) * vec2(1.0, 1.15)));
+    }
+    a *= (1.0 - vAge) * 0.7;
+    if (a < 0.01) discard;
+    gl_FragColor = vec4(uColor, min(a, 0.9));
+    #include <fog_fragment>
+  }
+`;
+
 class Ripples {
   constructor(max) {
     this.max = max;
@@ -209,6 +260,20 @@ class Ripples {
     this.mesh = new THREE.Mesh(g, this.mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 4;
+    // droplet crowns share the splash data
+    const g2 = new THREE.InstancedBufferGeometry();
+    g2.setAttribute('position', g.attributes.position);
+    g2.setIndex([0, 1, 2, 0, 2, 3]);
+    g2.setAttribute('aData', this.attr);
+    g2.instanceCount = max;
+    this.crownMat = new THREE.ShaderMaterial({
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 }, uColor: { value: new THREE.Color(0.8, 0.85, 0.9) } }]),
+      vertexShader: CROWN_VS, fragmentShader: CROWN_FS, transparent: true, depthWrite: false, fog: true, side: THREE.DoubleSide,
+    });
+    this.crowns = new THREE.Mesh(g2, this.crownMat);
+    this.crowns.frustumCulled = false;
+    this.crowns.renderOrder = 4;
+    this.mesh.add(this.crowns);
     this.idx = 0;
     this.acc = 0;
   }
@@ -222,7 +287,7 @@ class Ripples {
     this.attr.needsUpdate = true;
     this.dirty = false;
   }
-  dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
+  dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); this.crowns.geometry.dispose(); this.crownMat.dispose(); }
 }
 
 // ------------------------------------------------------------------ lightning bolt
@@ -278,11 +343,14 @@ export class Weather {
     this.cfg = w || null;
     this.id = w?.id || 'clear';
     WETNESS.value = w?.wet ?? 0;
+    RAIN_FX.value.x = w?.rain ?? 0;
     WIND.speed = w ? 0.8 + w.windSway * 0.5 : 1;
     WIND.amp.value = w?.windSway ?? 1;
     const g = this.g;
     this.baseHemi = g.hemi.intensity;
     this.baseSky = g.sky?.material.uniforms.uIntensity.value ?? 1;
+    this.baseSun = { pos: g.sun.position.clone(), color: g.sun.color.clone(), intensity: g.sun.intensity, vm: g.vmSun.intensity };
+    this.sunMoved = false;
     if (!w) return;
     const q = Math.max(0.35, g.preset.particles ?? 1);
     if (w.rain > 0) {
@@ -300,6 +368,7 @@ export class Weather {
       this.nextStrike = 5 + Math.random() * 8;
     }
     this.audio?.startRain?.(w.rain, w.lightning);
+    if (this.audio) this.audio.wetness = w.rain > 0 ? 1 : w.wet * 0.4;
   }
 
   strike() {
@@ -311,6 +380,8 @@ export class Weather {
     const dist = 900 + Math.random() * 900;
     const x = cam.x + Math.cos(a) * dist, z = cam.z + Math.sin(a) * dist;
     const k = dist / 300;
+    // the flash lights the scene from the strike's direction, high up in the clouds
+    this.boltDir = new THREE.Vector3(Math.cos(a), 0.95 + Math.random() * 0.5, Math.sin(a)).normalize();
     if (this.bolt) { this.g.fxScene.remove(this.bolt); this.bolt.geometry.dispose(); }
     let s = Math.random() * 1e6;
     const rand = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -336,10 +407,17 @@ export class Weather {
   update(dt, indoor = 0) {
     if (!this.cfg) return;
     this.t += dt;
+    RAIN_FX.value.y = this.t % 1000;
     const g = this.g;
     const cam = g.camera.position;
+    // gusts: the wind rises and falls instead of blowing steadily
+    const t = this.t;
+    const gust = Math.max(0, 0.55 + 0.3 * Math.sin(t * 0.23) * Math.sin(t * 0.61 + 1.7) + 0.25 * Math.sin(t * 1.3 + Math.sin(t * 0.4) * 2));
+    WIND.amp.value = this.cfg.windSway * (0.55 + 0.8 * gust);
     if (this.rain) {
       const u = this.rain.mat.uniforms;
+      u.uVel.value.x = this.cfg.wind[0] * (0.35 + 1.2 * gust);
+      u.uVel.value.z = this.cfg.wind[1] * (0.35 + 1.2 * gust);
       u.uCam.value.copy(cam);
       u.uTime.value = this.t % 1000;
       u.uPx.value = g.canvas.height / (2 * Math.tan((g.vfovRad || 1.2) / 2));
@@ -347,6 +425,8 @@ export class Weather {
       u.uColor.value.copy(g.hemi.color).multiplyScalar(0.55 * (g.hemi.intensity / Math.max(0.1, this.baseHemi)) + 0.12);
       this.ripples.mat.uniforms.uTime.value = this.t;
       this.ripples.mat.uniforms.uColor.value.copy(u.uColor.value).multiplyScalar(1.2);
+      this.ripples.crownMat.uniforms.uTime.value = this.t;
+      this.ripples.crownMat.uniforms.uColor.value.copy(u.uColor.value).multiplyScalar(1.5);
       // ripples on whatever surface is under the sky near the camera
       this.ripples.acc += dt * 170 * this.cfg.rain;
       let n = Math.min(12, Math.floor(this.ripples.acc));
@@ -368,9 +448,29 @@ export class Weather {
         if (k >= 0 && k < 3) f = Math.max(f, p.k * (k < 1 ? 1 : Math.exp(-(k - 1) * 3)));
       }
       this.flash = f;
-      g.hemi.intensity = this.baseHemi * (1 + f * 5 * (1 - indoor * 0.6));
-      if (g.sky) g.sky.material.uniforms.uIntensity.value = this.baseSky * (1 + f * 3.5);
-      g.vmHemi.intensity *= 1 + f * 3 * (1 - indoor * 0.6);
+      // the flash is a real light from the strike: hard, blue-white, casting sharp shadows (the sun's
+      // shadow map is re-aimed for those few frames), with the sky lit up around the bolt
+      const sun = g.sun;
+      if (f > 0.02 && this.boltDir) {
+        sun.position.copy(sun.target.position).addScaledVector(this.boltDir, 120);
+        sun.color.setRGB(0.78, 0.85, 1.0);
+        sun.intensity = this.baseSun.intensity + f * 4.5;
+        this.sunMoved = true;
+      } else if (this.sunMoved) {
+        sun.position.copy(this.baseSun.pos);
+        sun.color.copy(this.baseSun.color);
+        sun.intensity = this.baseSun.intensity;
+        this.sunMoved = false;
+      }
+      g.hemi.intensity = this.baseHemi * (1 + f * 1.2 * (1 - indoor * 0.6));
+      if (g.sky) {
+        const su = g.sky.material.uniforms;
+        su.uIntensity.value = this.baseSky * (1 + f * 0.7);
+        su.uFlash.value = f;
+        if (this.boltDir) su.uFlashDir.value.copy(this.boltDir);
+      }
+      g.vmHemi.intensity *= 1 + f * 2 * (1 - indoor * 0.6);
+      g.vmSun.intensity = this.baseSun.vm + f * 4 * (1 - indoor * 0.7);
       if (this.bolt) this.bolt.visible = this.t < this.boltUntil && f > 0.05;
     }
     this.audio?.setRainIndoor?.(indoor);
@@ -387,12 +487,20 @@ export class Weather {
     this.roofTex = null;
     if (this.cfg?.lightning) {
       g.hemi.intensity = this.baseHemi;
-      if (g.sky) g.sky.material.uniforms.uIntensity.value = this.baseSky;
+      if (g.sky) { g.sky.material.uniforms.uIntensity.value = this.baseSky; g.sky.material.uniforms.uFlash.value = 0; }
+      if (this.sunMoved) {
+        g.sun.position.copy(this.baseSun.pos);
+        g.sun.color.copy(this.baseSun.color);
+        g.sun.intensity = this.baseSun.intensity;
+        this.sunMoved = false;
+      }
     }
     this.cfg = null;
     WETNESS.value = 0;
+    RAIN_FX.value.x = 0;
     WIND.speed = 1;
     WIND.amp.value = 1;
     this.audio?.stopRain?.();
+    if (this.audio) this.audio.wetness = 0;
   }
 }

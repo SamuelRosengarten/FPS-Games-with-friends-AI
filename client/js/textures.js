@@ -139,18 +139,76 @@ function addPom(m, pomScale) {
 export const ROOM_BOUNCE = { value: new THREE.Color(0, 0, 0) };
 
 // 0..1 how wet outdoor surfaces are (rain / fog, set by weather.js): darker and glossier, horizontal
-// surfaces most (on Epic the screen-space reflections then mirror the world in wet streets).
+// surfaces most (on Epic the screen-space reflections then mirror the world in wet streets). In rain,
+// water also collects in puddles on flat ground, with rain-drop ripples running across them.
 export const WETNESS = { value: 0 };
+export const RAIN_FX = { value: { x: 0, y: 0 } }; // x: rain intensity (ripples), y: time
+const WET_PARS = `
+uniform float uWetness;
+uniform vec2 uRainFx;
+vec2 wetHash22( vec2 p ) {
+  vec3 q = fract( vec3( p.xyx ) * vec3( 0.1031, 0.1030, 0.0973 ) );
+  q += dot( q, q.yzx + 33.33 );
+  return fract( ( q.xx + q.yz ) * q.zy );
+}
+// expanding rings from drops landing on random spots of a grid; returns the surface slope (xz)
+vec2 rainRipples( vec2 uv, float time ) {
+  vec2 n = vec2( 0.0 );
+  vec2 p0 = floor( uv );
+  for ( int j = -1; j <= 1; j ++ ) {
+    for ( int i = -1; i <= 1; i ++ ) {
+      vec2 pi = p0 + vec2( float( i ), float( j ) );
+      vec2 h = wetHash22( pi );
+      float t = fract( time * ( 0.8 + 0.5 * h.x ) + h.y );
+      vec2 v = pi + wetHash22( h * 91.7 ) - uv;
+      float len = max( length( v ), 1e-3 );
+      float d = len - 2.0 * t;
+      float e = 1e-3;
+      float d1 = d - e, d2 = d + e;
+      float p1 = sin( 31.0 * d1 ) * smoothstep( -0.6, -0.3, d1 ) * smoothstep( 0.0, -0.3, d1 );
+      float p2 = sin( 31.0 * d2 ) * smoothstep( -0.6, -0.3, d2 ) * smoothstep( 0.0, -0.3, d2 );
+      n += v / len * ( p2 - p1 ) / ( 2.0 * e ) * ( 1.0 - t ) * ( 1.0 - t );
+    }
+  }
+  return n / 9.0;
+}
+`;
 const WET_CODE = `
+  float wetPuddle = 0.0;
   #ifdef USE_COLOR_ALPHA
   if ( uWetness > 0.0 ) {
-    float wetUp = smoothstep( 0.35, 0.9, inverseTransformDirection( normalize( vNormal ), viewMatrix ).y );
+    vec3 wetN = inverseTransformDirection( normalize( vNormal ), viewMatrix );
+    float wetUp = smoothstep( 0.35, 0.9, wetN.y );
     float wet = uWetness * vColor.a * mix( 0.3, 1.0, wetUp );
     #ifdef MACRO_VAR
       wet = clamp( wet * mix( 0.7, 1.25, macroN1 ), 0.0, 1.0 ); // wetter patches
+      // walls soak up splash-back near the ground
+      wet = max( wet, uWetness * vColor.a * ( 1.0 - wetUp ) * ( 1.0 - smoothstep( 0.05, 0.7, vMacroPos.y ) ) * 0.9 );
+      // water collects in the low spots of flat ground
+      float pn = texture2D( uMacroTex, vMacroPos.xz * 0.075 + 0.37 ).r * 0.62 + texture2D( uMacroTex, vMacroPos.xz * 0.31 + 0.11 ).g * 0.38;
+      wetPuddle = smoothstep( 0.555, 0.585, pn ) * smoothstep( 0.93, 0.98, wetN.y ) * vColor.a * smoothstep( 0.55, 1.0, uWetness );
     #endif
     diffuseColor.rgb *= 1.0 - 0.4 * wet; // wet stone and sand darken
-    roughnessFactor = mix( roughnessFactor, 0.05 + roughnessFactor * 0.22, wet * mix( 0.5, 1.0, wetUp ) );
+    // a wet surface is glossy but not a mirror (the water film follows the texture); puddles are
+    roughnessFactor = mix( roughnessFactor, 0.14 + roughnessFactor * 0.3, wet * mix( 0.5, 1.0, wetUp ) );
+    // standing water: a dark, mirror-smooth film
+    diffuseColor.rgb *= 1.0 - 0.55 * wetPuddle;
+    roughnessFactor = mix( roughnessFactor, 0.015, wetPuddle );
+  }
+  #endif
+`;
+// after the normal maps: rain ripples disturb the puddle surface
+const RIPPLE_CODE = `
+  #if defined( USE_COLOR_ALPHA ) && defined( MACRO_VAR )
+  if ( wetPuddle > 0.01 ) {
+    // flat water: the texture's bumps disappear under it
+    normal = normalize( mix( normal, normalize( vNormal ), wetPuddle ) );
+    if ( uRainFx.x > 0.0 ) {
+      vec2 rs = rainRipples( vMacroPos.xz * 4.5, uRainFx.y * ( 0.9 + 0.35 * uRainFx.x ) ) * 0.55
+              + rainRipples( vMacroPos.xz * 6.3 + 17.0, uRainFx.y * ( 1.1 + 0.35 * uRainFx.x ) ) * 0.45 * min( 1.0, uRainFx.x );
+      vec3 rw = normalize( vec3( -rs.x * 0.9, 1.0, -rs.y * 0.9 ) );
+      normal = normalize( mix( normal, normalize( ( viewMatrix * vec4( rw, 0.0 ) ).xyz ), wetPuddle ) );
+    }
   }
   #endif
 `;
@@ -161,9 +219,11 @@ const WET_CODE = `
 function specOcclusion(sh) {
   sh.uniforms.uRoomBounce = ROOM_BOUNCE;
   sh.uniforms.uWetness = WETNESS;
+  sh.uniforms.uRainFx = RAIN_FX;
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform vec3 uRoomBounce;\nuniform float uWetness;')
+    .replace('#include <common>', `#include <common>\nuniform vec3 uRoomBounce;\n${WET_PARS}`)
     .replace('#include <normal_fragment_begin>', `${WET_CODE}\n#include <normal_fragment_begin>`)
+    .replace('#include <emissivemap_fragment>', `${RIPPLE_CODE}\n#include <emissivemap_fragment>`)
     .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
     #ifdef USE_COLOR_ALPHA
       irradiance += uRoomBounce * ( 1.0 - vColor.a ) * ( 0.85 - 0.15 * inverseTransformDirection( geometryNormal, viewMatrix ).y );

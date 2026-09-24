@@ -196,8 +196,9 @@ export class Skyline {
     this.hw = (b.maxX - b.minX) / 2;
     this.hd = (b.maxZ - b.minZ) / 2;
     this.R0 = Math.hypot(this.hw, this.hd);
-    this.fogFar = map.theme?.fogFar ?? 260;
-    this.fogNear = map.theme?.fogNear ?? 60;
+    // placed by the clear-weather fog range, so rain and fog swallow it instead of pulling it closer
+    this.fogFar = map.theme?.skylineFogFar ?? map.theme?.fogFar ?? 260;
+    this.fogNear = map.theme?.skylineFogNear ?? map.theme?.fogNear ?? 60;
     this.buildings = new Merge();
     this.solid = new Merge();
     this.terrain = new Merge();
