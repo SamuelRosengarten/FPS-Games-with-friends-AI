@@ -113,7 +113,7 @@ export function addMacroVariation(m, pomScale = 0) {
         vMacroPos = (macroM * vec4(transformed, 1.0)).xyz;
         vMacroNrm = normalize(mat3(macroM) * objectNormal);`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform sampler2D uMacroTex;\nvarying vec3 vMacroPos;\nvarying vec3 vMacroNrm;')
+      .replace('#include <common>', '#include <common>\n#define MACRO_VAR\nuniform sampler2D uMacroTex;\nvarying vec3 vMacroPos;\nvarying vec3 vMacroNrm;')
       .replace('#include <map_fragment>', `#include <map_fragment>
         vec3 macroA = abs(vMacroNrm);
         vec2 macroUV = macroA.y > max(macroA.x, macroA.z) ? vMacroPos.xz : (macroA.x > macroA.z ? vMacroPos.zy : vMacroPos.xy);
@@ -138,13 +138,32 @@ function addPom(m, pomScale) {
 // bouncing off the floor and walls.
 export const ROOM_BOUNCE = { value: new THREE.Color(0, 0, 0) };
 
+// 0..1 how wet outdoor surfaces are (rain / fog, set by weather.js): darker and glossier, horizontal
+// surfaces most (on Epic the screen-space reflections then mirror the world in wet streets).
+export const WETNESS = { value: 0 };
+const WET_CODE = `
+  #ifdef USE_COLOR_ALPHA
+  if ( uWetness > 0.0 ) {
+    float wetUp = smoothstep( 0.35, 0.9, inverseTransformDirection( normalize( vNormal ), viewMatrix ).y );
+    float wet = uWetness * vColor.a * mix( 0.3, 1.0, wetUp );
+    #ifdef MACRO_VAR
+      wet = clamp( wet * mix( 0.7, 1.25, macroN1 ), 0.0, 1.0 ); // wetter patches
+    #endif
+    diffuseColor.rgb *= 1.0 - 0.4 * wet; // wet stone and sand darken
+    roughnessFactor = mix( roughnessFactor, 0.05 + roughnessFactor * 0.22, wet * mix( 0.5, 1.0, wetUp ) );
+  }
+  #endif
+`;
+
 // The baked vertex colour is an ambient-occlusion term (interiors, wall bases); apply it to the sky
 // reflections too so glossy floors indoors don't mirror a bright sky. Vertex alpha 0 marks indoor
 // surfaces, which get the room bounce light (a little more on ceilings, lit from the floor).
 function specOcclusion(sh) {
   sh.uniforms.uRoomBounce = ROOM_BOUNCE;
+  sh.uniforms.uWetness = WETNESS;
   sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform vec3 uRoomBounce;')
+    .replace('#include <common>', '#include <common>\nuniform vec3 uRoomBounce;\nuniform float uWetness;')
+    .replace('#include <normal_fragment_begin>', `${WET_CODE}\n#include <normal_fragment_begin>`)
     .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
     #ifdef USE_COLOR_ALPHA
       irradiance += uRoomBounce * ( 1.0 - vColor.a ) * ( 0.85 - 0.15 * inverseTransformDirection( geometryNormal, viewMatrix ).y );

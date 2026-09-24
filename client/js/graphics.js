@@ -50,8 +50,8 @@ const SKY_VS = /* glsl */`
   }
 `;
 const SKY_FS = /* glsl */`
-  uniform vec3 uTop, uHorizon, uBottom, uSunDir, uSunColor, uCloudColor;
-  uniform float uCloudCover, uTime, uIntensity, uSunSize;
+  uniform vec3 uTop, uHorizon, uBottom, uSunDir, uSunColor, uCloudColor, uFogColor;
+  uniform float uCloudCover, uTime, uIntensity, uSunSize, uFogSky;
   varying vec3 vDir;
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float noise(vec2 p) {
@@ -81,6 +81,8 @@ const SKY_FS = /* glsl */`
       col = mix(col, cc, c * 0.92);
     }
     col += uSunColor * smoothstep(1.0 - uSunSize, 1.0 - uSunSize * 0.55, sd) * 14.0;
+    // foggy / stormy weather: the sky fades into the fog, most of all near the horizon
+    col = mix(col, uFogColor, uFogSky * (1.0 - 0.45 * smoothstep(0.0, 0.7, h)));
     gl_FragColor = vec4(col * uIntensity, 1.0);
   }
 `;
@@ -94,7 +96,9 @@ function makeSky(theme, radius) {
       uHorizon: { value: lin(theme.skyHorizon) },
       uBottom: { value: lin(theme.skyBottom) },
       uSunDir: { value: sd },
-      uSunColor: { value: lin(theme.sun.color).multiplyScalar(1.0) },
+      uSunColor: { value: lin(theme.sun.color).multiplyScalar(theme.sunDisc ?? 1) },
+      uFogColor: { value: lin(theme.fog) },
+      uFogSky: { value: theme.fogSky ?? 0 },
       uCloudColor: { value: lin(theme.cloudColor ?? 0xffffff) },
       uCloudCover: { value: theme.cloudCover ?? 0.4 },
       uTime: { value: 0 },
@@ -394,6 +398,7 @@ export class Graphics {
     this.exposure = null;
     if (p.adapt && this.s.eyeAdaptation !== false) {
       this.exposure = new ExposurePass();
+      this.exposure.setKey(0.18 * (this.map?.theme.adaptKey ?? 1));
       composer.addPass(this.exposure);
     }
     this.bloom = null;
@@ -520,6 +525,7 @@ export class Graphics {
     this.applyGrade(th.grade || {});
     this.map = map;
     this.temporal?.lighting?.setMap(map, this.sun);
+    this.exposure?.setKey(0.18 * (th.adaptKey ?? 1));
     this.exposure?.reset();
     applyAtmosphere(this, map, { pcss: this.pcss() });
   }

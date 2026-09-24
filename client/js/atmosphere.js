@@ -139,7 +139,7 @@ export function applyAtmosphere(graphics, map, { pcss }) {
   const th = map.theme;
   const sd = new THREE.Vector3(...th.sun.dir).normalize();
   const sc = new THREE.Color(th.sun.color).multiplyScalar(0.45 * Math.min(1.5, (th.sun.intensity || 3) / 3));
-  patchFog({ sunDir: [sd.x, sd.y, sd.z], sunCol: [sc.r, sc.g, sc.b], h0: 3, h1: th.fogHeight ?? 70, hMin: 0.45 });
+  patchFog({ sunDir: [sd.x, sd.y, sd.z], sunCol: [sc.r, sc.g, sc.b], h0: 3, h1: th.fogHeight ?? 70, hMin: th.fogMin ?? 0.45 });
   const cam = graphics.sun.shadow.camera;
   const texels = graphics.sun.shadow.mapSize.x / 4096;
   patchShadows(pcss ? { depthRange: cam.far - cam.near, frustum: cam.right - cam.left, sunSize: th.sunSize ?? 0.025, texels } : null);

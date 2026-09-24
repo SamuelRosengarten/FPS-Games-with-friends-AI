@@ -662,6 +662,105 @@ export class AudioEngine {
     this.ambient = { g, nodes };
   }
 
+  // Rain loop: the hiss of drops plus the body of the downpour (and gusts of wind in a storm). Indoors
+  // it is muffled and quieter, like hearing it on the roof.
+  startRain(intensity = 1, storm = false) {
+    if (!this.ctx || intensity <= 0) return;
+    this.stopRain();
+    const ctx = this.ctx, t = ctx.currentTime;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    const level = 0.045 + intensity * 0.04;
+    g.gain.linearRampToValueAtTime(level, t + 2.5);
+    const indoor = ctx.createGain();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 8000;
+    lp.connect(indoor).connect(g).connect(this.sfx);
+    const hiss = this.noiseSrc(this.noise);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 1300;
+    const pk = ctx.createBiquadFilter();
+    pk.type = 'peaking';
+    pk.frequency.value = 4200;
+    pk.gain.value = 5;
+    const hg = ctx.createGain();
+    hg.gain.value = 0.55;
+    hiss.connect(hp).connect(pk).connect(hg).connect(lp);
+    const body = this.noiseSrc(this.pink);
+    const bl = ctx.createBiquadFilter();
+    bl.type = 'lowpass';
+    bl.frequency.value = 800;
+    const bg = ctx.createGain();
+    bg.gain.value = 1.3;
+    body.connect(bl).connect(bg).connect(lp);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.08;
+    const lg = ctx.createGain();
+    lg.gain.value = level * 0.2;
+    lfo.connect(lg).connect(g.gain);
+    hiss.start(); body.start(); lfo.start();
+    const nodes = [hiss, body, lfo];
+    if (storm) {
+      const wind = this.noiseSrc(this.pink);
+      const wf = ctx.createBiquadFilter();
+      wf.type = 'bandpass';
+      wf.frequency.value = 380;
+      wf.Q.value = 0.8;
+      const wl = ctx.createOscillator();
+      wl.frequency.value = 0.13;
+      const wlg = ctx.createGain();
+      wlg.gain.value = 220;
+      wl.connect(wlg).connect(wf.frequency);
+      const wg = ctx.createGain();
+      wg.gain.value = 1.1;
+      wind.connect(wf).connect(wg).connect(g);
+      wind.start(); wl.start();
+      nodes.push(wind, wl);
+    }
+    this.rain = { g, lp, indoor, nodes, k: -1 };
+  }
+
+  setRainIndoor(k) {
+    const r = this.rain;
+    if (!r || Math.abs(k - r.k) < 0.02) return;
+    r.k = k;
+    const t = this.ctx.currentTime;
+    r.lp.frequency.setTargetAtTime(8000 - 7100 * k, t, 0.35);
+    r.indoor.gain.setTargetAtTime(1 - 0.45 * k, t, 0.35);
+  }
+
+  stopRain() {
+    if (!this.rain) return;
+    const { g, nodes } = this.rain;
+    const t = this.ctx.currentTime;
+    g.gain.cancelScheduledValues(t);
+    g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.linearRampToValueAtTime(0, t + 0.6);
+    for (const n of nodes) n.stop(t + 0.7);
+    this.rain = null;
+  }
+
+  // Thunder `delay` seconds from now: a crack for close strikes, then a long rolling rumble.
+  thunder(delay, strength = 0.5) {
+    if (!this.ok()) return;
+    const t = this.now + delay;
+    const out = this.out(null, { bus: this.sfx });
+    out.gain.value = 0.3 + strength * 0.55;
+    if (strength > 0.6) this.burst(out, t, { type: 'bandpass', freq: 1700, q: 0.5, attack: 0.002, peak: 0.7 * strength, decay: 0.3 });
+    const n = 4 + Math.floor(Math.random() * 3);
+    let dt = 0;
+    for (let i = 0; i < n; i++) {
+      this.burst(out, t + dt, {
+        type: 'lowpass', freq: 150 + Math.random() * 150, q: 0.8, attack: 0.04 + Math.random() * 0.25,
+        peak: 1 - i * 0.12, decay: 1.2 + Math.random() * 1.8, buf: this.pink, sweepTo: 60,
+      });
+      dt += 0.2 + Math.random() * 0.6;
+    }
+    this.track(delay + dt + 3);
+  }
+
   stopAmbient() {
     if (!this.ambient) return;
     const { g, nodes } = this.ambient;

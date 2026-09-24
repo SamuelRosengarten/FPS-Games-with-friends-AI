@@ -2,7 +2,7 @@
 
 import { performance } from 'node:perf_hooks';
 import {
-  PROTOCOL_VERSION, TICK_RATE, TEAM, MODES, DEFAULT_SETTINGS, sanitizeName, clamp,
+  PROTOCOL_VERSION, TICK_RATE, TEAM, MODES, DEFAULT_SETTINGS, WEATHER, sanitizeName, clamp,
 } from '../shared/constants.js';
 import { mapList, MAP_DEFS } from '../shared/maps/index.js';
 import { Match } from './match.js';
@@ -293,6 +293,7 @@ export class Game {
     num('startMoney', 0, 16000);
     if (typeof s.friendlyFire === 'boolean') next.friendlyFire = s.friendlyFire;
     if (['easy', 'normal', 'hard', 'expert'].includes(s.botDifficulty)) next.botDifficulty = s.botDifficulty;
+    if (WEATHER[s.weather] || s.weather === 'random') next.weather = s.weather;
     const modeChanged = next.mode !== cur.mode;
     this.settings = next;
     if (modeChanged) {

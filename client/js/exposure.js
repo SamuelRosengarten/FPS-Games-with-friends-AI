@@ -72,6 +72,9 @@ export class ExposurePass extends Pass {
   // jump straight to the target exposure (new map, respawn)
   reset() { this.meter.uniforms.uReset.value = 1; }
 
+  // mid-grey the adaptation aims for (lower = the scene is allowed to stay darker)
+  setKey(k) { this.meter.uniforms.uKey.value = k; }
+
   render(renderer, writeBuffer, readBuffer, deltaTime) {
     const src = this.lum[this.idx], dst = this.lum[1 - this.idx];
     const m = this.meter.uniforms;

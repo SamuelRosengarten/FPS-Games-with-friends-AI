@@ -2,7 +2,7 @@
 
 import {
   TEAM, PLAYER, FLAG, ECONOMY, MAX_LAG_COMP, USE_RANGE, BOMB_RADIUS, BOMB_DAMAGE, MODES,
-  clamp, viewDir, isEnemy, wrapAngle, TAG_MS, tagSlow,
+  clamp, viewDir, isEnemy, wrapAngle, TAG_MS, tagSlow, WEATHER, resolveWeather,
 } from '../shared/constants.js';
 import { WEAPONS, GEAR, GRENADES, DEFAULT_PISTOL, GUNGAME_ORDER, computeDamage, itemPrice } from '../shared/weapons.js';
 import { loadMap } from '../shared/maps/index.js';
@@ -29,6 +29,9 @@ export class Match {
     this.mode = settings.mode;
     this.modeInfo = MODES[this.mode];
     this.map = loadMap(settings.map);
+    this.weather = resolveWeather(settings.weather);
+    this.sightRange = WEATHER[this.weather].sight;
+    this.hearingScale = WEATHER[this.weather].hearing;
     if (!this.map.modes.includes(this.mode)) this.mode = this.map.modes[0];
     this.world = new PhysicsWorld(this.map.boxes, this.map.bounds);
     this.nav = getNav(this.map.id, this.world);
@@ -152,6 +155,7 @@ export class Match {
     return {
       map: this.map.id,
       mode: this.mode,
+      weather: this.weather,
       settings: this.settings,
       state: {
         phase: this.phase,

@@ -11,12 +11,14 @@ import { WorldView } from '../js/world.js';
 import { Effects } from '../js/effects.js';
 import { Decor } from '../js/decor.js';
 import { PhysicsWorld } from '../shared/physics.js';
+import { Weather, weatherTheme } from '../js/weather.js';
 
 const q = new URLSearchParams(location.search);
 const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false, aa: q.get('aa') || 'auto', upscaling: q.get('up') || 'native',
   volumetrics: q.get('vol') !== '0', reflections: q.get('ssr') !== '0', eyeAdaptation: q.get('adapt') !== '0' };
 const g = new Graphics(document.getElementById('wrap'), settings);
 const map = getMap(q.get('map') || 'sandstone');
+if (q.get('weather')) map.theme = weatherTheme(map.theme, q.get('weather'));
 g.setupEnvironment(map);
 const view0 = q.get('view') || 'vm';
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0xb09878, roughness: 0.9 }));
@@ -46,6 +48,10 @@ if (view === 'vm') {
   if (q.get('probe') !== '0') g.captureEnvironment(map, [decor?.skyline?.group]);
   if (q.get('reinforce')) map.destructibles.forEach((id, i) => { if (Math.floor(i / 6) % 2 === 0) wv.setPanelReinforced(id, true); });
   window.__decor = decor;
+  if (q.get('weather')) {
+    window.__weather = new Weather(g, null);
+    window.__weather.setup(map, new PhysicsWorld(map.boxes, map.bounds));
+  }
   const cam = (q.get('cam') || '0,1.7,0,0,0').split(',').map(Number);
   g.camera.position.set(cam[0], cam[1], cam[2]);
   g.camera.rotation.set(cam[4] || 0, cam[3] || 0, 0);
@@ -124,6 +130,7 @@ function loop() {
   t += dt;
   if (window.__fx) window.__fx.update(dt, performance.now());
   if (window.__decor) window.__decor.update(dt, t);
+  if (window.__weather) window.__weather.update(dt, 0);
   if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1, aimStyle: q.get('aim') || 'cs' });
   g.render(dt);
   requestAnimationFrame(loop);

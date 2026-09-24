@@ -21,17 +21,21 @@ const REFLECTIVE_BLEND = {
   blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
 };
 
-// Shared wind clock for vegetation / cloth vertex animation.
+// Shared wind clock for vegetation / cloth vertex animation. WIND is set by the weather: speed scales
+// the clock, amp the sway (storms whip palms and flags around).
 const windTime = { value: 0 };
+export const WIND = { speed: 1, amp: { value: 1 } };
 
 // Sways vertices in world space (applied after projection setup so instanced meshes move coherently).
 // weight: GLSL expression for how much a vertex moves (0 at the root).
 function addWind(mat, { amp = 0.1, freq = 1.3, weight = 'max(position.y, 0.0)', attr = false } = {}) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uWindTime = windTime;
+    sh.uniforms.uWindAmp = WIND.amp;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
 uniform float uWindTime;
+uniform float uWindAmp;
 ${attr ? 'attribute float aWind;' : ''}`)
       .replace('#include <project_vertex>', `#include <project_vertex>
 {
@@ -42,7 +46,7 @@ ${attr ? 'attribute float aWind;' : ''}`)
   wBase = modelMatrix * wBase;
   float wK = ${weight};
   float wPh = uWindTime * ${freq.toFixed(3)} + wBase.x * 0.23 + wBase.z * 0.31;
-  vec3 wOff = vec3(sin(wPh) + 0.35 * sin(wPh * 2.7 + 1.3), 0.15 * sin(wPh * 1.9), 0.6 * cos(wPh * 0.8 + 0.5)) * ${amp.toFixed(3)} * wK;
+  vec3 wOff = vec3(sin(wPh) + 0.35 * sin(wPh * 2.7 + 1.3), 0.15 * sin(wPh * 1.9), 0.6 * cos(wPh * 0.8 + 0.5)) * ${amp.toFixed(3)} * wK * uWindAmp;
   mvPosition.xyz += (viewMatrix * vec4(wOff, 0.0)).xyz;
   gl_Position = projectionMatrix * mvPosition;
 }`);
@@ -1538,7 +1542,7 @@ normal = normalize( tbn * mapN );`);
   }
 
   update(dt, t) {
-    windTime.value = t;
+    windTime.value = t * WIND.speed;
     this.skyline?.update(t);
     for (const a of this.animated) {
       if (a.type === 'water') {
