@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { applyAtmosphere, probeSpot } from './atmosphere.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
@@ -108,6 +109,8 @@ const GradeShader = {
     uTime: { value: 0 },
     uHurt: { value: 0 },
     uCA: { value: 0 },
+    uSharpen: { value: 0 },
+    uTexel: { value: new THREE.Vector2(1 / 1920, 1 / 1080) },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -116,13 +119,18 @@ const GradeShader = {
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
     uniform vec3 uLift, uGain;
-    uniform float uContrast, uSaturation, uVignette, uGrain, uTime, uHurt, uCA;
+    uniform float uContrast, uSaturation, uVignette, uGrain, uTime, uHurt, uCA, uSharpen;
+    uniform vec2 uTexel;
     varying vec2 vUv;
     void main() {
       // slight lateral chromatic aberration towards the frame edges, like a real lens
       vec2 cd = vUv - 0.5;
-      vec2 co = cd * dot(cd, cd) * 0.014 * (uCA + uHurt * 1.5);
+      vec2 co = cd * dot(cd, cd) * 0.006 * (uCA + uHurt * 2.5);
       vec3 c = vec3(texture2D(tDiffuse, vUv + co).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - co).b);
+      // light unsharp mask: crisper texture detail, especially when dynamic resolution upscales
+      vec3 nb = texture2D(tDiffuse, vUv + vec2(uTexel.x, 0.0)).rgb + texture2D(tDiffuse, vUv - vec2(uTexel.x, 0.0)).rgb
+              + texture2D(tDiffuse, vUv + vec2(0.0, uTexel.y)).rgb + texture2D(tDiffuse, vUv - vec2(0.0, uTexel.y)).rgb;
+      c = max(c + (c - nb * 0.25) * uSharpen, 0.0);
       c = c * uGain + uLift * (1.0 - c);
       c = (c - 0.5) * uContrast + 0.5;
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -258,6 +266,7 @@ export class Graphics {
     this.scene.traverse((o) => { if (o.material) { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((m) => { m.needsUpdate = true; }); } });
     this.buildComposer();
     this.resize();
+    if (this.map) applyAtmosphere(this, this.map, { pcss: p.shadows >= 4096 });
   }
 
   basePixelRatio() {
@@ -314,6 +323,7 @@ export class Graphics {
     if (p.grade) {
       this.grade = new ShaderPass(GradeShader);
       this.grade.uniforms.uCA.value = p.pixelRatio >= 1.5 ? 1 : 0;
+      this.grade.uniforms.uSharpen.value = p.pixelRatio >= 1.5 ? 0.35 : 0.2;
       if (this.gradeCfg) this.applyGrade(this.gradeCfg);
       composer.addPass(this.grade);
     }
@@ -330,6 +340,7 @@ export class Graphics {
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(pr);
     this.composer.setSize(w, h);
+    if (this.grade) this.grade.uniforms.uTexel.value.set(1 / Math.max(1, w * pr), 1 / Math.max(1, h * pr));
     this.camera.aspect = w / h;
     this.vmCamera.aspect = w / h;
     this.setFov(this.baseFov || this.s.fov);
@@ -360,6 +371,7 @@ export class Graphics {
     const scene = this.scene;
     if (this.sky) { scene.remove(this.sky); this.sky.material.dispose(); this.sky.geometry.dispose(); }
     if (this.envTex) { this.envTex.dispose(); this.envTex = null; }
+    if (this.probeRT) { this.probeRT.dispose(); this.probeRT = null; }
 
     const sd = new THREE.Vector3(...th.sun.dir).normalize();
     const sky = makeSky(th, 2500);
@@ -413,6 +425,26 @@ export class Graphics {
     this.themeHemi = th.hemi.intensity;
     this.themeSun = th.sun.intensity;
     this.applyGrade(th.grade || {});
+    this.map = map;
+    applyAtmosphere(this, map, { pcss: this.preset.shadows >= 4096 });
+  }
+
+  // Capture the finished map into the environment map (ambient light + reflections from the real
+  // surroundings). Call once the world and decor are in the scene.
+  // hide: objects left out of the capture (the distant skyline would block too much sky light).
+  captureEnvironment(map = this.map, hide = []) {
+    if (!map) return;
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    const was = hide.filter(Boolean).map((o) => [o, o.visible]);
+    for (const [o] of was) o.visible = false;
+    const rt = pmrem.fromScene(this.scene, 0.04, 0.3, 3000, { size: this.preset.shadows >= 4096 ? 256 : 128, position: probeSpot(map) });
+    for (const [o, v] of was) o.visible = v;
+    pmrem.dispose();
+    if (this.probeRT) this.probeRT.dispose();
+    this.probeRT = rt;
+    this.scene.environment = rt.texture;
+    this.vmScene.environment = rt.texture;
+    this.scene.environmentIntensity = this.preset.env * (map.theme.envIntensity ?? 1) * (map.theme.probeBoost ?? 1.6);
   }
 
   applyGrade(g) {
