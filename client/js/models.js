@@ -149,6 +149,45 @@ function ext(pts, width, material, o = {}) {
   return m;
 }
 
+// Lofted part: rounded (superellipse) cross-sections swept along Z, for stocks, grips and handguards with
+// real contours instead of flat slabs. secs: [[z, yTop, yBottom, width], ...]; p: squareness
+// (2 = ellipse, 4+ = rounded rectangle). o.x/o.y/o.z position, o.rx tilt.
+function loft(secs, material, p = 2.6, o = {}) {
+  const S = secs[0][0] > secs[secs.length - 1][0] ? [...secs].reverse() : secs;
+  const seg = o.seg ?? 18;
+  const pos = [], idx = [];
+  for (const [z, yt, yb, w] of S) {
+    const cy = (yt + yb) / 2, hh = (yt - yb) / 2, hw = w / 2;
+    for (let i = 0; i < seg; i++) {
+      const a = (i / seg) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+      pos.push(Math.sign(c) * Math.abs(c) ** (2 / p) * hw, cy + Math.sign(sn) * Math.abs(sn) ** (2 / p) * hh, z);
+    }
+  }
+  const n = S.length;
+  for (let r = 0; r < n - 1; r++) {
+    for (let i = 0; i < seg; i++) {
+      const a = r * seg + i, b = r * seg + (i + 1) % seg, c = (r + 1) * seg + (i + 1) % seg, d = (r + 1) * seg + i;
+      idx.push(a, b, c, a, c, d);
+    }
+  }
+  for (const [r, first] of [[0, true], [n - 1, false]]) {
+    const ci = pos.length / 3;
+    pos.push(0, (S[r][1] + S[r][2]) / 2, S[r][0]);
+    for (let i = 0; i < seg; i++) {
+      const a = r * seg + i, b = r * seg + (i + 1) % seg;
+      if (first) idx.push(ci, b, a); else idx.push(ci, a, b);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(projectUV(geo), material);
+  m.position.set(o.x || 0, o.y || 0, o.z || 0);
+  if (o.rx) m.rotation.x = o.rx;
+  return m;
+}
+
 function buildPistol(o) {
   const g = new THREE.Group();
   const L = o.len;
@@ -292,9 +331,10 @@ function buildRifle(o) {
     add(box(0.003, 0.014, 0.1, M.steel(), 0.025, 0.05, -0.04), 0.06);
     add(box(0.012, 0.018, 0.012, M.steel(), 0.028, 0.068, -0.03)); // charging handle
     // wooden handguards around the gas tube, gas block, barrel, front sight, slant brake
-    add(box(0.054, 0.042, 0.2, furniture, 0, 0.036, -0.43));
-    for (let i = 0; i < 3; i++) add(box(0.056, 0.004, 0.16, M.color(0x3a2212, 0, 0.8), 0, 0.02 + i * 0.012, -0.43));
-    add(box(0.044, 0.026, 0.19, furniture, 0, 0.078, -0.44));
+    // lower handguard: swelling palm rest with finger grooves; upper: rounded gas tube cover
+    add(loft([[-0.33, 0.057, 0.016, 0.046], [-0.345, 0.059, 0.012, 0.054], [-0.43, 0.058, 0.01, 0.056], [-0.5, 0.057, 0.014, 0.052], [-0.53, 0.055, 0.022, 0.044]], furniture, 2.4));
+    for (let i = 0; i < 3; i++) add(box(0.0575, 0.003, 0.13, M.color(0x3a2212, 0, 0.8), 0, 0.022 + i * 0.011, -0.435));
+    add(loft([[-0.345, 0.09, 0.066, 0.036], [-0.36, 0.093, 0.064, 0.04], [-0.52, 0.091, 0.066, 0.038], [-0.535, 0.087, 0.068, 0.03]], furniture, 2.2));
     add(cyl(0.0095, 0.08, dark, 0, 0.078, -0.57));
     add(box(0.028, 0.036, 0.03, dark, 0, 0.066, -0.62));
     add(cyl(0.0085, 0.34, dark, 0, 0.055, -0.66));
@@ -312,8 +352,8 @@ function buildRifle(o) {
     add(box(0.007, 0.004, 0.07, M.steel(), 0, -0.017, -0.03));
     add(box(0.007, 0.03, 0.005, M.steel(), 0, -0.004, -0.064));
     add(box(0.005, 0.02, 0.005, M.steel(), 0, -0.002, -0.04), 0.3);
-    // wooden pistol grip
-    add(box(0.03, 0.11, 0.042, furniture, 0, -0.04, 0.03), 0.3);
+    // wooden pistol grip, swelling at the palm
+    add(loft([[0.0, 0.021, -0.021, 0.028], [0.03, 0.023, -0.023, 0.031], [0.075, 0.022, -0.022, 0.03], [0.108, 0.019, -0.018, 0.027]], furniture, 2.6, { x: 0, y: 0.012, z: 0.012, rx: Math.PI / 2 - 0.3 }));
     // curved "banana" magazine: one extruded side profile (x of the shape = -z of the gun)
     const mm = M.color(0x6a3c1e, 0.2, 0.5);
     const prof = new THREE.Shape();
@@ -332,62 +372,78 @@ function buildRifle(o) {
       mag.add(rib);
     }
     mag.position.set(0, 0.01, -0.115);
-    // wooden stock with steel butt plate
-    const st = box(0.042, 0.062, 0.24, furniture, 0, 0.012, 0.2);
-    st.rotation.x = 0.1;
-    stock.add(st);
-    const heel = box(0.044, 0.1, 0.06, furniture, 0, -0.012, 0.3);
-    heel.rotation.x = 0.1;
-    stock.add(heel);
-    const plate = box(0.046, 0.104, 0.008, M.steel(), 0, -0.014, 0.332);
-    plate.rotation.x = 0.1;
-    stock.add(plate);
+    // wooden stock: slim wrist dropping to a deep butt, steel butt plate
+    stock.add(loft([[0.07, 0.052, 0.012, 0.034], [0.13, 0.049, -0.012, 0.036], [0.22, 0.042, -0.042, 0.04], [0.3, 0.036, -0.066, 0.042], [0.326, 0.034, -0.072, 0.042]], furniture, 2.8));
+    stock.add(loft([[0.325, 0.036, -0.074, 0.044], [0.333, 0.035, -0.075, 0.043]], M.steel(), 3.5));
     g.add(stock);
     g.add(mag);
     return finish(g, { muzzle: [0, 0.055, -0.83], eject: [0.03, 0.06, -0.08], sightY: 0.1005, fore: [0, 0.02, -0.42], grip: [0, -0.02, 0.03], kind: 'rifle' });
   }
-  // AR platform: upper/lower receivers, rails, M-LOK handguard, forward assist, buffer tube stock
-  add(box(0.044, 0.05, 0.2, body, 0, 0.02, -0.07));
-  add(box(0.05, 0.052, 0.085, body, 0, -0.002, -0.12));
-  add(box(0.046, 0.04, 0.22, body, 0, 0.064, -0.08));
-  add(box(0.03, 0.012, 0.36, dark, 0, 0.09, -0.16));
-  for (let i = 0; i < 12; i++) add(box(0.034, 0.006, 0.01, dark, 0, 0.097, -0.01 - i * 0.026));
-  add(cyl(0.009, 0.03, body, 0.029, 0.066, 0.0));
-  add(box(0.04, 0.008, 0.024, M.polymer(), 0, 0.078, 0.04));
-  add(box(0.002, 0.02, 0.055, dark, 0.024, 0.062, -0.05));
-  add(box(0.004, 0.012, 0.024, M.steel(), 0.024, 0.042, -0.1));
-  // handguard with slots
-  add(box(0.054, 0.054, 0.3, furniture, 0, 0.058, -0.36));
-  for (const sx of [-1, 1]) for (let i = 0; i < 5; i++) add(box(0.002, 0.012, 0.03, M.rubber(), sx * 0.0275, 0.052, -0.26 - i * 0.045));
-  for (let i = 0; i < 5; i++) add(box(0.02, 0.002, 0.03, M.rubber(), 0, 0.0305, -0.26 - i * 0.045));
-  add(cyl(0.0085, 0.18, dark, 0, 0.058, -0.6));
-  add(box(0.024, 0.03, 0.025, dark, 0, 0.066, -0.53));
-  // flash hider with prongs
-  add(cyl(0.012, 0.03, dark, 0, 0.058, -0.705));
-  for (let i = 0; i < 4; i++) {
-    const a = i * Math.PI / 2 + Math.PI / 4;
-    add(box(0.006, 0.006, 0.03, dark, Math.cos(a) * 0.009, 0.058 + Math.sin(a) * 0.009, -0.735));
+  // AR platform: forged lower with flared magwell, upper with ejection port and forward assist, octagonal
+  // free-float M-LOK handguard, birdcage flash hider, angled grip, curved polymer magazine, carbine stock
+  add(ext([[0.032, 0.046], [0.036, 0.03], [0.034, 0.012, 0.024, 0.004], [0.012, -0.004], [-0.074, -0.004], [-0.078, -0.03], [-0.086, -0.04], [-0.162, -0.04], [-0.168, -0.028], [-0.168, 0.002], [-0.178, 0.012], [-0.178, 0.046]], 0.044, body, { bevel: 0.0028 }));
+  add(ext([[-0.084, -0.028], [-0.086, -0.042], [-0.164, -0.042], [-0.166, -0.028]], 0.05, body, { bevel: 0.003 })); // magwell flare
+  // trigger guard (thin U) and trigger
+  add(ext([[-0.074, -0.004], [-0.074, -0.026], [-0.066, -0.03], [0.004, -0.03], [0.01, -0.024], [0.012, -0.004], [0.004, -0.004], [0.004, -0.022], [-0.064, -0.022], [-0.066, -0.004]], 0.009, M.polymer(), { bevel: 0.0015 }));
+  add(ext([[-0.036, -0.004], [-0.043, -0.014, -0.036, -0.021], [-0.032, -0.02], [-0.036, -0.012, -0.031, -0.004]], 0.005, M.steel(), { bevel: 0.001 }));
+  // upper receiver, dust cover, forward assist, charging handle, brass deflector
+  add(ext([[0.034, 0.046], [0.034, 0.078], [0.028, 0.084], [-0.2, 0.084], [-0.206, 0.078], [-0.206, 0.046]], 0.046, body, { bevel: 0.0028 }));
+  add(box(0.0022, 0.016, 0.062, dark, 0.0235, 0.063, -0.066));
+  add(box(0.003, 0.004, 0.004, M.steel(), 0.0245, 0.063, -0.04));
+  add(cyl(0.0085, 0.028, body, 0.028, 0.068, 0.004, 'z', 12));
+  add(cyl(0.0065, 0.008, M.steel(), 0.028, 0.068, 0.02, 'z', 12));
+  add(ext([[-0.03, 0.058], [-0.012, 0.06], [-0.012, 0.074], [-0.03, 0.078]], 0.008, body, { x: 0.026, bevel: 0.002 }));
+  add(box(0.04, 0.008, 0.02, M.polymer(), 0, 0.087, 0.038));
+  add(box(0.012, 0.006, 0.016, M.polymer(), 0.022, 0.087, 0.038));
+  // full-length top rail
+  add(box(0.024, 0.008, 0.56, dark, 0, 0.09, -0.25));
+  for (let i = 0; i < 21; i++) add(box(0.028, 0.005, 0.009, dark, 0, 0.0965, 0.02 - i * 0.026));
+  // octagonal free-float handguard with M-LOK slots
+  const hg = new THREE.Mesh(projectUV(new THREE.CylinderGeometry(0.03, 0.03, 0.33, 8, 1)), furniture);
+  hg.rotation.set(Math.PI / 2, Math.PI / 8, 0);
+  hg.position.set(0, 0.058, -0.37);
+  add(hg);
+  const slot = M.color(0x0c0c0d, 0.1, 0.9);
+  for (let i = 0; i < 5; i++) {
+    const z = -0.26 - i * 0.05;
+    for (const sx of [-1, 1]) add(box(0.002, 0.008, 0.032, slot, sx * 0.0279, 0.058, z));
+    for (const sx of [-1, 1]) {
+      const d = box(0.002, 0.008, 0.032, slot, sx * 0.0197, 0.0383, z);
+      d.rotation.z = sx * Math.PI / 4;
+      add(d);
+    }
+    add(box(0.008, 0.002, 0.032, slot, 0, 0.0302, z));
   }
-  // trigger guard, trigger, grip
-  add(box(0.007, 0.004, 0.065, M.polymer(), 0, -0.012, -0.03));
-  add(box(0.005, 0.02, 0.005, M.steel(), 0, 0.002, -0.04), 0.3);
-  add(box(0.03, 0.105, 0.044, M.polymer(), 0, -0.036, 0.03), 0.3);
-  for (let i = 0; i < 3; i++) add(box(0.031, 0.01, 0.006, M.rubber(), 0, -0.02 - i * 0.022, 0.01 - i * 0.007), 0.3);
-  // slightly curved magazine with base plate
-  const m1 = box(0.025, 0.09, 0.056, M.gunmetal(), 0, -0.035, 0.0);
-  const m2 = box(0.025, 0.08, 0.056, M.gunmetal(), 0, -0.112, 0.012);
-  m2.rotation.x = -0.18;
-  const base = box(0.03, 0.01, 0.062, M.polymer(), 0, -0.152, 0.02);
-  base.rotation.x = -0.18;
-  mag.add(m1, m2, base);
-  for (let i = 0; i < 3; i++) mag.add(box(0.026, 0.004, 0.044, M.gunmetal(), 0, -0.02 - i * 0.03, -0.001));
-  mag.position.set(0, 0.0, -0.12);
-  // buffer tube and adjustable stock
-  stock.add(cyl(0.013, 0.2, dark, 0, 0.058, 0.13));
-  for (let i = 0; i < 5; i++) stock.add(box(0.004, 0.006, 0.006, M.steel(), 0, 0.044, 0.08 + i * 0.022));
-  stock.add(box(0.044, 0.07, 0.13, M.polymer(), 0, 0.045, 0.23));
-  stock.add(box(0.036, 0.022, 0.1, M.polymer(), 0, 0.085, 0.22));
-  stock.add(box(0.046, 0.09, 0.014, M.rubber(), 0, 0.04, 0.298));
+  add(cyl(0.031, 0.012, dark, 0, 0.058, -0.2, 'z', 8)); // barrel nut end
+  // barrel, low-profile gas block, birdcage flash hider
+  add(cyl(0.0088, 0.2, dark, 0, 0.058, -0.63, 'z', 16));
+  add(cyl(0.0105, 0.035, dark, 0, 0.058, -0.555, 'z', 16));
+  add(cyl(0.0115, 0.052, dark, 0, 0.058, -0.755, 'z', 16));
+  for (let i = 0; i < 5; i++) {
+    const an = i * (Math.PI * 2 / 5) + 0.3;
+    const sl = box(0.003, 0.004, 0.026, slot, Math.cos(an) * 0.0112, 0.058 + Math.sin(an) * 0.0112, -0.758);
+    sl.rotation.z = an;
+    add(sl);
+  }
+  // angled pistol grip with a beavertail
+  add(loft([[0.0, 0.019, -0.019, 0.027], [0.02, 0.021, -0.022, 0.03], [0.05, 0.02, -0.023, 0.03], [0.08, 0.021, -0.02, 0.03], [0.1, 0.02, -0.018, 0.028], [0.106, 0.016, -0.014, 0.024]], M.polymer(), 3, { x: 0, y: 0.002, z: 0.018, rx: Math.PI / 2 - 0.35 }));
+  add(ext([[0.02, 0.004], [0.036, 0.0], [0.04, -0.012], [0.024, -0.008]], 0.03, M.polymer(), { bevel: 0.003 }));
+  // curved polymer magazine with ribs and base plate
+  mag.add(ext([[-0.029, 0.012], [0.029, 0.012], [0.032, -0.07, 0.052, -0.146], [-0.006, -0.154], [-0.022, -0.07, -0.029, 0.012]], 0.024, M.color(0x2a2b2d, 0.05, 0.7), { bevel: 0.0022 }));
+  mag.add(ext([[0.052, -0.143], [0.058, -0.16], [-0.012, -0.169], [-0.012, -0.151]], 0.029, M.polymer(), { bevel: 0.0025 }));
+  for (let i = 0; i < 4; i++) {
+    const r = box(0.0255, 0.003, 0.034, M.polymer(), 0, -0.03 - i * 0.026, 0.004 + i * i * 0.0022);
+    r.rotation.x = -0.1 - i * 0.07;
+    mag.add(r);
+  }
+  mag.position.set(0, 0.0, -0.123);
+  // buffer tube with castle nut, carbine stock with cheek riser and rubber pad
+  stock.add(cyl(0.0135, 0.22, dark, 0, 0.058, 0.14, 'z', 16));
+  stock.add(cyl(0.016, 0.01, dark, 0, 0.058, 0.04, 'z', 10));
+  for (let i = 0; i < 6; i++) stock.add(box(0.004, 0.004, 0.006, M.steel(), 0, 0.0435, 0.08 + i * 0.02));
+  stock.add(loft([[0.15, 0.074, 0.043, 0.03], [0.18, 0.084, 0.03, 0.036], [0.23, 0.09, 0.012, 0.04], [0.284, 0.092, -0.004, 0.042], [0.294, 0.092, -0.006, 0.041]], M.polymer(), 3.2));
+  stock.add(loft([[0.2, 0.094, 0.07, 0.032], [0.28, 0.097, 0.07, 0.036]], M.polymer(), 2.6));
+  stock.add(loft([[0.293, 0.094, -0.009, 0.044], [0.305, 0.093, -0.01, 0.043]], M.rubber(), 3.5));
   g.add(stock);
   g.add(mag);
   // red-dot optic on the rail
@@ -439,8 +495,8 @@ function buildShotgun(o) {
   // wooden stock with comb, wrist and recoil pad
   const stock = new THREE.Group();
   stock.name = 'stock';
-  stock.add(ext([[0.045, 0.072], [0.1, 0.068], [0.36, 0.058], [0.365, -0.07], [0.2, -0.045], [0.1, -0.012, 0.045, 0.012]], 0.044, wood, { bevel: 0.007 }));
-  stock.add(ext([[0.362, 0.06], [0.382, 0.06], [0.387, -0.07], [0.367, -0.072]], 0.046, M.rubber(), { bevel: 0.004 }));
+  stock.add(loft([[0.045, 0.072, 0.012, 0.036], [0.1, 0.07, -0.012, 0.034], [0.2, 0.066, -0.045, 0.038], [0.3, 0.061, -0.064, 0.043], [0.362, 0.058, -0.07, 0.044]], wood, 2.5));
+  stock.add(loft([[0.361, 0.06, -0.072, 0.046], [0.384, 0.06, -0.073, 0.045]], M.rubber(), 3.2));
   g.add(stock);
   return finish(g, { muzzle: [0, 0.062, -0.75], eject: [0.03, 0.058, -0.07], sightY: 0.084, fore: [0, 0.01, -0.4], grip: [0, -0.02, 0.05], kind: 'shotgun', pump: true });
 }

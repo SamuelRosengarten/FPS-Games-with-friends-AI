@@ -63,7 +63,7 @@ export class ClientGame {
       this.tex = new TextureLibrary(this.g.renderer, this.g.quality);
       this.tex.quality = this.g.quality;
     }
-    const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', 'metal', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
+    const mats = [...new Set([...this.map.boxes.map((b) => b.mat), 'woodPanel', 'wood', 'lamp', 'barrel', 'metal', this.map.decor?.trim || this.map.mats.building || 'concrete'])];
     const t0 = performance.now();
     const wx = (this.weatherId !== 'clear' && WEATHER[this.weatherId] ? ` · ${WEATHER[this.weatherId].name}` : '') + (this.night ? ' · Night' : '');
     await this.tex.prepare(mats, (f) => { document.getElementById('loading-text').textContent = `Building ${this.map.name}${wx}… ${Math.round(f * 100)}%`; });

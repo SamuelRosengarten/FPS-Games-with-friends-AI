@@ -44,7 +44,7 @@ if (view === 'vm') {
   label.textContent = `viewmodel: ${q.get('w') || 'ar'}${q.get('ads') ? ' (ADS)' : ''}`;
 } else if (view === 'map') {
   const tex = new TextureLibrary(g.renderer, g.quality);
-  const mats = [...new Set([...map.boxes.map((b) => b.mat), 'woodPanel', 'lamp', 'barrel', map.decor?.trim || map.mats.building || 'concrete'])];
+  const mats = [...new Set([...map.boxes.map((b) => b.mat), 'woodPanel', 'wood', 'lamp', 'barrel', map.decor?.trim || map.mats.building || 'concrete'])];
   await tex.prepare(mats);
   const wv = new WorldView(g, tex, map);
   const decor = q.get('decor') === '0' ? null : new Decor(g, tex, map);

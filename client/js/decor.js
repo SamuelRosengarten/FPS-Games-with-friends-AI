@@ -1385,11 +1385,13 @@ export class Decor {
   buildCrateTrim() {
     const caps = new Batch();
     const handles = new Batch();
+    const boards = new Batch();
     for (const b of this.map.boxes) {
       if (b.kind !== 'crate') continue;
       const w = b.max[0] - b.min[0], h = b.max[1] - b.min[1], d = b.max[2] - b.min[2];
       const cx = (b.min[0] + b.max[0]) / 2, cz = (b.min[2] + b.max[2]) / 2, cy = (b.min[1] + b.max[1]) / 2;
       if (b.mat === 'crate') {
+        this.crateBoards(boards, b);
         const s = 0.085;
         for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
           caps.box(s, s, s, cx + sx * (w / 2 - s / 2 + 0.006), cy + sy * (h / 2 - s / 2 + 0.006), cz + sz * (d / 2 - s / 2 + 0.006));
@@ -1407,8 +1409,45 @@ export class Decor {
         }
       }
     }
+    this.mesh(boards.build(2.5), withoutVertexColors(this.tex.material('wood'), 1.25), { cast: true });
     this.mesh(caps.build(), new THREE.MeshStandardMaterial({ color: 0x3a3632, metalness: 0.7, roughness: 0.5 }), { cast: false });
     this.mesh(handles.build(), new THREE.MeshStandardMaterial({ color: 0x1e1f1d, metalness: 0.4, roughness: 0.6 }), { cast: false });
+  }
+
+  // Raised frame boards and the diagonal brace on each visible face of a wooden crate, laid over the
+  // frame painted in the crate texture (13% of the face on each edge, brace rising along the texture's u).
+  crateBoards(batch, b) {
+    const w = b.max[0] - b.min[0], h = b.max[1] - b.min[1], d = b.max[2] - b.min[2];
+    const c = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+    const faces = [
+      { n: [1, 0, 0], u: [0, 0, -1], v: [0, 1, 0], a: d, b: h, off: w / 2 },
+      { n: [-1, 0, 0], u: [0, 0, 1], v: [0, 1, 0], a: d, b: h, off: w / 2 },
+      { n: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0], a: w, b: h, off: d / 2 },
+      { n: [0, 0, -1], u: [-1, 0, 0], v: [0, 1, 0], a: w, b: h, off: d / 2 },
+      { n: [0, 1, 0], u: [1, 0, 0], v: [0, 0, -1], a: w, b: d, off: h / 2, top: true },
+    ];
+    const T = 0.018;
+    const U = new THREE.Vector3(), V = new THREE.Vector3(), N = new THREE.Vector3(), P = new THREE.Vector3();
+    const m = new THREE.Matrix4();
+    const plank = (f, du, dv, su, sv, t, ang = 0) => {
+      N.fromArray(f.n);
+      const u0 = new THREE.Vector3().fromArray(f.u), v0 = new THREE.Vector3().fromArray(f.v);
+      U.copy(u0).multiplyScalar(Math.cos(ang)).addScaledVector(v0, Math.sin(ang));
+      V.copy(v0).multiplyScalar(Math.cos(ang)).addScaledVector(u0, -Math.sin(ang));
+      P.fromArray(c).addScaledVector(N, f.off + t / 2).addScaledVector(u0, du).addScaledVector(v0, dv);
+      m.makeBasis(U, V, N).setPosition(P);
+      batch.add(new THREE.BoxGeometry(su, sv, t), m);
+    };
+    for (const f of faces) {
+      const fa = 0.13 * f.a, fb = 0.13 * f.b;
+      plank(f, 0, f.b / 2 - fb / 2, f.a, fb, T);        // top / bottom rails run the full width
+      plank(f, 0, -f.b / 2 + fb / 2, f.a, fb, T);
+      plank(f, f.a / 2 - fa / 2, 0, fa, f.b - 2 * fb, T); // stiles between them
+      plank(f, -f.a / 2 + fa / 2, 0, fa, f.b - 2 * fb, T);
+      const ia = f.a - 2 * fa, ib = f.b - 2 * fb;
+      const ang = Math.atan2(ib, ia) * (f.top ? -1 : 1);
+      plank(f, 0, 0, Math.hypot(ia, ib), Math.min(fa, fb) * 1.05, T * 0.7, ang);
+    }
   }
 
   // Highest surface under a point (walls, roofs, raised floors) for things standing on top of the map.
