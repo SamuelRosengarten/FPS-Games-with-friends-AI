@@ -13,6 +13,14 @@ const tmpS = new THREE.Vector3();
 const tmpP = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
+// Normal alpha blending for colour, but the target's alpha is multiplied by (1 - coverage): the surface
+// under a puddle or water becomes reflective for the screen-space reflections (lighting.js).
+const REFLECTIVE_BLEND = {
+  blending: THREE.CustomBlending,
+  blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+  blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+};
+
 // Shared wind clock for vegetation / cloth vertex animation.
 const windTime = { value: 0 };
 
@@ -930,7 +938,7 @@ export class Decor {
     }, false));
     const geo = new THREE.PlaneGeometry(1, 1);
     geo.rotateX(-Math.PI / 2);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x121518, alphaMap: tex, transparent: true, roughness: 0.05, metalness: 0.35, envMapIntensity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1 });
+    const mat = new THREE.MeshStandardMaterial({ color: 0x121518, alphaMap: tex, transparent: true, roughness: 0.05, metalness: 0.35, envMapIntensity: 0.8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, ...REFLECTIVE_BLEND });
     const mesh = new THREE.InstancedMesh(geo, mat, pts.length);
     pts.forEach(([x, z, s, rot], i) => {
       tmpM.compose(tmpP.set(x, 0.008, z), tmpQ.setFromAxisAngle(UP, rot), tmpS.set(s * 1.4, 1, s));
@@ -1487,7 +1495,7 @@ transformed.y -= fU * fU * 0.1;`);
     n1.repeat.set(w / 2.5, d / 2.5);
     n2.repeat.set(w / 1.7, d / 1.7);
     n2.needsUpdate = true;
-    const water = new THREE.MeshStandardMaterial({ color: 0x1d4a55, roughness: 0.04, metalness: 0.15, normalMap: n1, normalScale: new THREE.Vector2(0.35, 0.35), envMapIntensity: 1.6, transparent: true, opacity: 0.88 });
+    const water = new THREE.MeshStandardMaterial({ color: 0x1d4a55, roughness: 0.04, metalness: 0.15, normalMap: n1, normalScale: new THREE.Vector2(0.35, 0.35), envMapIntensity: 1.6, transparent: true, opacity: 0.88, ...REFLECTIVE_BLEND });
     water.onBeforeCompile = (sh) => {
       sh.uniforms.normalMap2 = { value: n2 };
       sh.uniforms.normalMap2Transform = { value: n2.matrix };

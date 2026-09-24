@@ -43,6 +43,9 @@ export const DEFAULTS = {
   aa: 'auto',            // auto (from the preset) | taa | msaa | smaa | fxaa | none
   upscaling: 'native',   // temporal upscaling: native | quality | balanced | performance
   sharpness: 0.5,
+  volumetrics: true,     // volumetric sunlight (Ultra / Epic)
+  reflections: true,     // screen-space reflections (Epic)
+  eyeAdaptation: true,   // auto exposure (High and up)
   dynamicRes: true,
   maxRenderScale: 1.0,
   showFps: false,

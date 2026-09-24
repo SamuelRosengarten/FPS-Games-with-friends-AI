@@ -269,6 +269,9 @@ export class UI {
         select('upscaling', 'Upscaling (temporal AA)', Object.entries(UPSCALING).map(([k, u]) => [k, u.label]),
           'Renders fewer pixels and rebuilds full resolution from previous frames, like DLSS / FSR (without the AI part)');
         slider('sharpness', 'Sharpness', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
+        check('volumetrics', 'Volumetric lighting', 'Light shafts and sun haze (Ultra / Epic with temporal AA)');
+        check('reflections', 'Screen-space reflections', 'Reflections on puddles, water and glossy floors (Epic with temporal AA)');
+        check('eyeAdaptation', 'Eye adaptation', 'Exposure adjusts between bright outdoors and dark interiors (High and up)');
         check('dynamicRes', 'Dynamic resolution', 'Lowers render resolution on the fly to stay above 60 FPS');
         slider('maxRenderScale', 'Max render scale', 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`);
         check('showFps', 'Show FPS counter');

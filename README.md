@@ -23,7 +23,9 @@ One friend runs the server, everyone else plays in the browser. Tuned for **Wind
   holsters, knee and elbow pads, gloves and boots — with camouflage, fabric weave, MOLLE webbing, skin, leather and
   rubber surface detail (Attackers in desert multicam, Defenders in navy)
 - **High-end graphics** (Epic preset for RTX 3060 and up): 8K contact-hardening soft shadows (sharp at the
-  base, softer further from the caster), temporal anti-aliasing with DLSS-style upscaling and supersampling modes,
+  base, softer further from the caster), volumetric sunlight (light shafts and a glowing sun haze, dustier indoors),
+  screen-space reflections on water and puddles, eye adaptation between bright streets and dark rooms, bounce light
+  inside buildings, temporal anti-aliasing with DLSS-style upscaling and supersampling modes,
   full-resolution ambient occlusion (GTAO), 2048² textures on large surfaces, ambient light and reflections captured from
   each map (sunlit sand and walls bounce warm light), aerial perspective (haze that glows towards the sun and thins with
   altitude), bloom, physically based materials, sky lighting, per-map colour grading, a distant skyline around every map (desert town
@@ -162,8 +164,12 @@ Open **Settings → Video**:
 
 - **Auto** picks a preset for your GPU. RTX 2060 / 3060 / 4060 and up (and Radeon RX 6700 / 7700 and up) get **Epic**:
   8192² contact-hardening soft shadows, full-resolution GTAO ambient occlusion, temporal anti-aliasing, 2048² textures
-  on large surfaces (1024² elsewhere), 16× anisotropic filtering, a 512² environment probe and bloom.
-  Other RTX / recent Radeon cards get **Ultra** (4096² shadows, half-resolution AO, 1024² textures).
+  on large surfaces (1024² elsewhere), 16× anisotropic filtering, a 512² environment probe, volumetric sunlight
+  (16 steps), screen-space reflections, eye adaptation and bloom.
+  Other RTX / recent Radeon cards get **Ultra** (4096² shadows, half-resolution AO, 1024² textures, lighter volumetrics).
+- **Volumetric lighting**, **Screen-space reflections** and **Eye adaptation** can be switched off individually in
+  *Settings → Video*. The first two need temporal AA, which smooths out their per-frame noise. If the frame rate drops,
+  reflections and then volumetric lighting are the first effects the game switches off.
 - **Anti-aliasing**: *Temporal (TAA)* is the default on Ultra/Epic. The world is rendered with a tiny sub-pixel camera
   shift every frame and combined with the previous frames, which removes jagged and shimmering edges better than MSAA.
   Particles, smoke and tracers are drawn after it at full resolution, and your weapon is drawn on top with 4× MSAA, so

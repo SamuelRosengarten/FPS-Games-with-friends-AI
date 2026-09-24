@@ -133,10 +133,23 @@ function addPom(m, pomScale) {
   m.customProgramCacheKey = () => 'pom';
 }
 
+// Light bounced around inside rooms, set per map (setupEnvironment). The outdoor probe only reaches
+// interiors through their openings, which left ceilings nearly black; real rooms are filled by light
+// bouncing off the floor and walls.
+export const ROOM_BOUNCE = { value: new THREE.Color(0, 0, 0) };
+
 // The baked vertex colour is an ambient-occlusion term (interiors, wall bases); apply it to the sky
-// reflections too so glossy floors indoors don't mirror a bright sky.
+// reflections too so glossy floors indoors don't mirror a bright sky. Vertex alpha 0 marks indoor
+// surfaces, which get the room bounce light (a little more on ceilings, lit from the floor).
 function specOcclusion(sh) {
-  sh.fragmentShader = sh.fragmentShader.replace('#include <aomap_fragment>', `#include <aomap_fragment>
+  sh.uniforms.uRoomBounce = ROOM_BOUNCE;
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform vec3 uRoomBounce;')
+    .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
+    #ifdef USE_COLOR_ALPHA
+      irradiance += uRoomBounce * ( 1.0 - vColor.a ) * ( 0.85 - 0.15 * inverseTransformDirection( geometryNormal, viewMatrix ).y );
+    #endif`)
+    .replace('#include <aomap_fragment>', `#include <aomap_fragment>
     #ifdef USE_COLOR
       reflectedLight.indirectSpecular *= mix(1.0, smoothstep(0.35, 1.0, vColor.g), 0.85);
     #endif`);

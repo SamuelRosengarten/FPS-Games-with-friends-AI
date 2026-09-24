@@ -13,7 +13,8 @@ import { Decor } from '../js/decor.js';
 import { PhysicsWorld } from '../shared/physics.js';
 
 const q = new URLSearchParams(location.search);
-const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false, aa: q.get('aa') || 'auto', upscaling: q.get('up') || 'native' };
+const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false, aa: q.get('aa') || 'auto', upscaling: q.get('up') || 'native',
+  volumetrics: q.get('vol') !== '0', reflections: q.get('ssr') !== '0', eyeAdaptation: q.get('adapt') !== '0' };
 const g = new Graphics(document.getElementById('wrap'), settings);
 const map = getMap(q.get('map') || 'sandstone');
 g.setupEnvironment(map);
