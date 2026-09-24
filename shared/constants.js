@@ -58,6 +58,7 @@ export const FLAG = Object.freeze({
   BLIND: 1024,
   PROTECT: 2048,
   REINFORCE: 4096,
+  LIGHT: 8192,       // flashlight on
 });
 
 export const MODES = {
@@ -97,7 +98,20 @@ export const DEFAULT_SETTINGS = Object.freeze({
   fillBots: 0,            // fill each team up to this many players with bots
   startMoney: 800,
   weather: 'clear',       // clear | rain | storm | fog | random
+  time: 'auto',           // auto (the map's own) | day | night | random
 });
+
+// At night nobody makes out a player further than NIGHT_SIGHT metres, unless that player's flashlight is on
+// (then it gives them away from up to NIGHT_LIT_SIGHT).
+export const NIGHT_SIGHT = 45;
+export const NIGHT_LIT_SIGHT = 100;
+
+// 'auto' uses the map's default (def.night), 'random' makes about a third of matches night matches.
+export function resolveTime(t, mapDef, rand = Math.random) {
+  if (t === 'day' || t === 'night') return t;
+  if (t === 'random') return rand() < 0.35 ? 'night' : 'day';
+  return mapDef?.night ? 'night' : 'day';
+}
 
 // Weather the host can pick. sight: how far anyone can make out a player (bots use it; the client's fog
 // is tuned to match) · hearing: footstep hearing range multiplier (rain masks footsteps).

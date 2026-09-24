@@ -53,7 +53,7 @@ const SKY_VS = /* glsl */`
 `;
 const SKY_FS = /* glsl */`
   uniform vec3 uTop, uHorizon, uBottom, uSunDir, uSunColor, uCloudColor, uFogColor, uFlashDir;
-  uniform float uCloudCover, uTime, uIntensity, uSunSize, uFogSky, uFlash;
+  uniform float uCloudCover, uTime, uIntensity, uSunSize, uFogSky, uFlash, uStars;
   varying vec3 vDir;
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float noise(vec2 p) {
@@ -72,6 +72,22 @@ const SKY_FS = /* glsl */`
     vec3 col = h > 0.0 ? mix(uHorizon, uTop, pow(h, 0.45)) : mix(uHorizon, uBottom, pow(min(1.0, -h * 4.0), 0.6));
     float sd = max(dot(d, uSunDir), 0.0);
     col += uSunColor * (pow(sd, 5.0) * 0.18 + pow(sd, 48.0) * 0.5);
+    // stars (night): a jittered point per cell of a fine grid on the sky, twinkling, fading at the horizon
+    if (uStars > 0.0 && h > 0.0) {
+      vec3 sp = d * 240.0;
+      vec3 si = floor(sp);
+      float sh = fract(sin(dot(si, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+      if (sh > 0.985) {
+        vec3 so = vec3(fract(sh * 13.1), fract(sh * 71.7), fract(sh * 37.3)) * 0.6 + 0.2;
+        float sdist = length(sp - si - so);
+        float tw = 0.65 + 0.35 * sin(uTime * (2.0 + sh * 7.0) + sh * 90.0);
+        float mag = pow(fract(sh * 991.0), 3.0);
+        col += vec3(0.8, 0.86, 1.0) * smoothstep(0.16, 0.0, sdist) * (0.25 + 2.2 * mag) * tw * uStars * smoothstep(0.02, 0.25, h);
+      }
+      // faint milky way band
+      float band = exp(-pow(dot(d, normalize(vec3(0.35, 0.25, -0.9))) * 3.2, 2.0));
+      col += vec3(0.05, 0.06, 0.09) * band * uStars * (0.6 + 0.4 * fract(sin(dot(floor(d * 90.0), vec3(12.9, 78.2, 37.7))) * 43758.5)) * smoothstep(0.05, 0.4, h);
+    }
     if (h > 0.0) {
       vec2 uv = d.xz / (h + 0.12) * 1.3 + vec2(uTime * 0.006, uTime * 0.002);
       float n = fbm(uv);
@@ -103,7 +119,7 @@ function makeSky(theme, radius) {
       uSunColor: { value: lin(theme.sun.color).multiplyScalar(theme.sunDisc ?? 1) },
       uFogColor: { value: lin(theme.fog) },
       uFogSky: { value: theme.fogSky ?? 0 },
-      uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) },
+      uFlash: { value: 0 }, uFlashDir: { value: new THREE.Vector3(0, 1, 0) }, uStars: { value: theme.stars ?? 0 },
       uCloudColor: { value: lin(theme.cloudColor ?? 0xffffff) },
       uCloudCover: { value: theme.cloudCover ?? 0.4 },
       uTime: { value: 0 },
@@ -284,6 +300,10 @@ export class Graphics {
     this.vmFlash = new THREE.PointLight(0xffc070, 0, 3, 1.5);
     this.vmFlash.position.set(0.1, -0.05, -0.8);
     this.vmScene.add(this.vmFlash);
+    // spill from the weapon light onto the gun and hands at night
+    this.vmTorch = new THREE.PointLight(0xfff0dc, 0, 2.5, 1.5);
+    this.vmTorch.position.set(0.18, -0.02, -0.75);
+    this.vmScene.add(this.vmTorch);
 
     this.applyQuality();
     window.addEventListener('resize', () => this.resize());
@@ -414,6 +434,7 @@ export class Graphics {
       // body cameras adapt harder and later: windows blow out indoors, rooms go murky outdoors
       this.exposure = new ExposurePass(this.bodycam ? { strength: 0.8, min: 0.6, max: 2.6, up: 0.7, down: 1.6 } : {});
       this.exposure.setKey(0.18 * (this.map?.theme.adaptKey ?? 1));
+      this.exposure.setRange(this.bodycam ? 0.6 : 0.8, Math.max(this.bodycam ? 2.6 : 1.75, this.map?.theme.adaptMax ?? 0));
       composer.addPass(this.exposure);
     }
     this.bloom = null;
@@ -554,6 +575,7 @@ export class Graphics {
     this.map = map;
     this.temporal?.lighting?.setMap(map, this.sun);
     this.exposure?.setKey(0.18 * (th.adaptKey ?? 1));
+    this.exposure?.setRange(this.bodycam ? 0.6 : 0.8, Math.max(this.bodycam ? 2.6 : 1.75, th.adaptMax ?? 0));
     this.exposure?.reset();
     applyAtmosphere(this, map, { pcss: this.pcss() });
   }

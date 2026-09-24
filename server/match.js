@@ -2,7 +2,7 @@
 
 import {
   TEAM, PLAYER, FLAG, ECONOMY, MAX_LAG_COMP, USE_RANGE, BOMB_RADIUS, BOMB_DAMAGE, MODES,
-  clamp, viewDir, isEnemy, wrapAngle, TAG_MS, tagSlow, WEATHER, resolveWeather,
+  clamp, viewDir, isEnemy, wrapAngle, TAG_MS, tagSlow, WEATHER, resolveWeather, resolveTime, NIGHT_SIGHT,
 } from '../shared/constants.js';
 import { WEAPONS, GEAR, GRENADES, DEFAULT_PISTOL, GUNGAME_ORDER, computeDamage, itemPrice } from '../shared/weapons.js';
 import { loadMap } from '../shared/maps/index.js';
@@ -32,6 +32,8 @@ export class Match {
     this.weather = resolveWeather(settings.weather);
     this.sightRange = WEATHER[this.weather].sight;
     this.hearingScale = WEATHER[this.weather].hearing;
+    this.night = resolveTime(settings.time, this.map) === 'night';
+    if (this.night) this.sightRange = Math.min(this.sightRange, NIGHT_SIGHT);
     if (!this.map.modes.includes(this.mode)) this.mode = this.map.modes[0];
     this.world = new PhysicsWorld(this.map.boxes, this.map.bounds);
     this.nav = getNav(this.map.id, this.world);
@@ -156,6 +158,7 @@ export class Match {
       map: this.map.id,
       mode: this.mode,
       weather: this.weather,
+      night: this.night,
       settings: this.settings,
       state: {
         phase: this.phase,
@@ -343,6 +346,7 @@ export class Match {
   // ------------------------------------------------------------------ spawning
 
   spawn(p, sp) {
+    if (p.bot) p.light = this.night; // bots carry their flashlights on at night
     p.alive = true;
     p.hp = PLAYER.maxHealth;
     p.x = sp[0]; p.y = sp[1] + 0.02; p.z = sp[2];
@@ -543,6 +547,7 @@ export class Match {
       if (p.helmet) flags |= FLAG.HELMET;
       if (p.blindUntil > now) flags |= FLAG.BLIND;
       if (p.spawnProtectUntil > now) flags |= FLAG.PROTECT;
+      if (p.light && p.alive && this.night) flags |= FLAG.LIGHT;
       const item = this.currentItem(p);
       ps.push([p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch), r2(p.crouch), r2(p.lean), flags, item ? item.id : 'knife', Math.max(0, Math.round(p.hp))]);
     }
@@ -605,6 +610,7 @@ export class Match {
     p.onGround = !!m.g;
     p.walking = !!m.w;
     p.ads = !!m.a;
+    p.light = !!m.fl;
     p.lastInputAt = this.now;
   }
 

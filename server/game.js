@@ -294,6 +294,7 @@ export class Game {
     if (typeof s.friendlyFire === 'boolean') next.friendlyFire = s.friendlyFire;
     if (['easy', 'normal', 'hard', 'expert'].includes(s.botDifficulty)) next.botDifficulty = s.botDifficulty;
     if (WEATHER[s.weather] || s.weather === 'random') next.weather = s.weather;
+    if (['auto', 'day', 'night', 'random'].includes(s.time)) next.time = s.time;
     const modeChanged = next.mode !== cur.mode;
     this.settings = next;
     if (modeChanged) {

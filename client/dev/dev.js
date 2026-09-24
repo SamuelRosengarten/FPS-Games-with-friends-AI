@@ -12,6 +12,7 @@ import { Effects } from '../js/effects.js';
 import { Decor } from '../js/decor.js';
 import { PhysicsWorld } from '../shared/physics.js';
 import { Weather, weatherTheme } from '../js/weather.js';
+import { Flashlights, nightTheme } from '../js/night.js';
 
 const q = new URLSearchParams(location.search);
 const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynamicRes: false, aa: q.get('aa') || 'auto', upscaling: q.get('up') || 'native',
@@ -20,6 +21,7 @@ const settings = { ...loadSettings(), quality: q.get('quality') || 'high', dynam
 const g = new Graphics(document.getElementById('wrap'), settings);
 const map = getMap(q.get('map') || 'sandstone');
 if (q.get('weather')) map.theme = weatherTheme(map.theme, q.get('weather'));
+if (q.get('night') === '1' || (q.get('night') !== '0' && map.night)) map.theme = nightTheme(map.theme);
 g.setupEnvironment(map);
 const view0 = q.get('view') || 'vm';
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshStandardMaterial({ color: 0xb09878, roughness: 0.9 }));
@@ -49,9 +51,15 @@ if (view === 'vm') {
   if (q.get('probe') !== '0') g.captureEnvironment(map, [decor?.skyline?.group]);
   if (q.get('reinforce')) map.destructibles.forEach((id, i) => { if (Math.floor(i / 6) % 2 === 0) wv.setPanelReinforced(id, true); });
   window.__decor = decor;
+  const pw = new PhysicsWorld(map.boxes, map.bounds);
   if (q.get('weather')) {
     window.__weather = new Weather(g, null);
-    window.__weather.setup(map, new PhysicsWorld(map.boxes, map.bounds));
+    window.__weather.setup(map, pw);
+  }
+  if (map.theme.night) {
+    // flashlights: ours plus the characters' (they aim their lights at the camera's side)
+    window.__torches = new Flashlights(g, null);
+    window.__torches.setup(true, pw, 0.3);
   }
   const cam = (q.get('cam') || '0,1.7,0,0,0').split(',').map(Number);
   g.camera.position.set(cam[0], cam[1], cam[2]);
@@ -63,6 +71,7 @@ if (view === 'vm') {
     m.setWeapon(['ar', 'smg', 'm4', 'awp'][i]);
     m.update({ x: p[0], y: p[1], z: p[2], yaw: p[3], pitch: 0, crouch: 0, lean: 0, speed: 0, onGround: true }, 0.016);
     g.scene.add(m.root);
+    (window.__chars = window.__chars || []).push(m);
   });
   if (q.get('fx')) {
     // effects test: explosion ahead, impacts + blood on the nearest wall, casings, muzzle smoke
@@ -132,6 +141,11 @@ function loop() {
   if (window.__fx) window.__fx.update(dt, performance.now());
   if (window.__decor) window.__decor.update(dt, t);
   if (window.__weather) window.__weather.update(dt, 0);
+  if (window.__torches) {
+    const c = g.camera;
+    const remotes = (window.__chars || []).map((m) => ({ pos: m.muzzleWorld(new THREE.Vector3()), yaw: m.root.rotation.y, pitch: -0.05 }));
+    window.__torches.update(dt, q.get('light') === '0' ? null : { on: true, yaw: c.rotation.y, pitch: c.rotation.x }, remotes);
+  }
   const bc = settings.viewStyle === 'bodycam';
   if (vm) vm.update({ dt, speed: 0, onGround: true, crouch: 0, ads: q.get('ads') ? 1 : 0, lookDX: 0, lookDY: 0, bob: 1, aimStyle: q.get('aim') || 'cs', offX: bc ? -0.1 : 0, offY: bc ? -0.035 : 0, bodycam: bc });
   g.render(dt);

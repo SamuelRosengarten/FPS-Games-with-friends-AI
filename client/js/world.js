@@ -371,7 +371,8 @@ export class WorldView {
     const lampMat = this.tex.material('lamp');
     const geo = new THREE.BoxGeometry(1.1, 0.08, 0.35);
     for (const l of this.map.lights) {
-      const light = new THREE.PointLight(l.color, l.intensity * 2.2, l.distance * 1.35, 1.5);
+      const k = this.map.theme.lamps ?? 1; // brighter and further-reaching at night
+      const light = new THREE.PointLight(l.color, l.intensity * 2.2 * k, l.distance * 1.35 * Math.sqrt(k), 1.5);
       light.position.set(l.x, l.y - 0.15, l.z);
       this.group.add(light);
       this.lights.push(light);

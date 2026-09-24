@@ -225,6 +225,7 @@ export class Skyline {
     this.hd = (b.maxZ - b.minZ) / 2;
     this.R0 = Math.hypot(this.hw, this.hd);
     // placed by the clear-weather fog range, so rain and fog swallow it instead of pulling it closer
+    this.theme = map.theme;
     this.fogFar = map.theme?.skylineFogFar ?? map.theme?.fogFar ?? 260;
     this.fogNear = map.theme?.skylineFogNear ?? map.theme?.fogNear ?? 60;
     this.buildings = new Merge();
@@ -586,7 +587,10 @@ export class Skyline {
       const n = this.stacks.length * per;
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(n * 3), 3));
-      const mat = new THREE.PointsMaterial({ map: puffTexture(), size: 16, sizeAttenuation: true, transparent: true, opacity: 0.55, depthWrite: false, color: 0xd9d6d0, fog: true });
+      // chimney smoke is lit by the sky: dim in rain, nearly black against the night sky
+      const th = this.theme || {};
+      const lit = th.night ? 0.1 : th.weather?.rain > 0 ? 0.55 : 1;
+      const mat = new THREE.PointsMaterial({ map: puffTexture(), size: 16, sizeAttenuation: true, transparent: true, opacity: 0.55, depthWrite: false, color: new THREE.Color(0xd9d6d0).multiplyScalar(lit), fog: true });
       const pts = new THREE.Points(geo, mat);
       pts.frustumCulled = false;
       pts.userData.noAO = true;

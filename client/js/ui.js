@@ -102,11 +102,11 @@ export class UI {
         settings: {
           mode: $('set-mode').value, map: $('set-map').value, maxRounds: +$('set-rounds').value, roundTime: +$('set-roundtime').value,
           scoreLimit: +$('set-score').value, timeLimit: +$('set-time').value, fillBots: +$('set-fill').value,
-          botDifficulty: $('set-botdiff').value, friendlyFire: $('set-ff').value === 'true', weather: $('set-weather').value,
+          botDifficulty: $('set-botdiff').value, friendlyFire: $('set-ff').value === 'true', weather: $('set-weather').value, time: $('set-tod').value,
         },
       });
     };
-    for (const id of ['set-mode', 'set-map', 'set-rounds', 'set-roundtime', 'set-score', 'set-time', 'set-fill', 'set-botdiff', 'set-ff', 'set-weather']) {
+    for (const id of ['set-mode', 'set-map', 'set-rounds', 'set-roundtime', 'set-score', 'set-time', 'set-fill', 'set-botdiff', 'set-ff', 'set-weather', 'set-tod']) {
       $(id).addEventListener('change', () => {
         if (id === 'set-mode') {
           // pick a map that supports the mode
@@ -166,7 +166,7 @@ export class UI {
     const set = (id, v) => { if (document.activeElement !== $(id)) $(id).value = String(v); };
     set('set-mode', s.mode); set('set-map', s.map); set('set-rounds', s.maxRounds); set('set-roundtime', s.roundTime);
     set('set-score', s.scoreLimit); set('set-time', s.timeLimit); set('set-fill', s.fillBots); set('set-botdiff', s.botDifficulty);
-    set('set-ff', s.friendlyFire); set('set-weather', s.weather || 'clear');
+    set('set-ff', s.friendlyFire); set('set-weather', s.weather || 'clear'); set('set-tod', s.time || 'auto');
     ensureOption($('set-rounds'), s.maxRounds); ensureOption($('set-roundtime'), s.roundTime); ensureOption($('set-score'), s.scoreLimit); ensureOption($('set-time'), s.timeLimit);
     $('mode-desc').textContent = this.modes[s.mode]?.desc || '';
     const map = this.maps.find((m) => m.id === s.map);

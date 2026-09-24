@@ -75,6 +75,9 @@ export class ExposurePass extends Pass {
   // mid-grey the adaptation aims for (lower = the scene is allowed to stay darker)
   setKey(k) { this.meter.uniforms.uKey.value = k; }
 
+  // exposure limits (night: the eye may open up much further)
+  setRange(min, max) { this.meter.uniforms.uMin.value = min; this.meter.uniforms.uMax.value = max; }
+
   render(renderer, writeBuffer, readBuffer, deltaTime) {
     const src = this.lum[this.idx], dst = this.lum[1 - this.idx];
     const m = this.meter.uniforms;

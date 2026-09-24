@@ -3,8 +3,9 @@ import sandstone from './sandstone.js';
 import compound from './compound.js';
 import arena from './arena.js';
 import embassy from './embassy.js';
+import depot from './depot.js';
 
-export const MAP_DEFS = [sandstone, compound, embassy, arena];
+export const MAP_DEFS = [sandstone, compound, embassy, arena, depot];
 
 const cache = new Map();
 
@@ -23,5 +24,5 @@ export function loadMap(id) {
 }
 
 export function mapList() {
-  return MAP_DEFS.map((m) => ({ id: m.id, name: m.name, desc: m.desc, modes: m.modes }));
+  return MAP_DEFS.map((m) => ({ id: m.id, name: m.name, desc: m.desc, modes: m.modes, night: !!m.night }));
 }

@@ -5,8 +5,13 @@ One friend runs the server, everyone else plays in the browser. Tuned for **Wind
 (an RTX 3060 runs the top *Epic* preset), also runs on MacBooks and weaker PCs, with **keyboard & mouse or a controller**.
 
 - **4 game modes**: Defuse (round-based bomb plant/defuse with economy), Team Deathmatch, Free For All, Gun Game
-- **4 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls),
-  *Embassy* (two floors: atrium, balcony, inside and outside staircases), *Arena* (compact deathmatch)
+- **5 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls),
+  *Embassy* (two floors: atrium, balcony, inside and outside staircases), *Arena* (compact deathmatch),
+  *Depot* (small rail depot played at night: a dark warehouse, a container yard and a guard hut)
+- **Night mode**: play any map at night (the host picks *Time: Night*, or *Random*; Depot is night by default).
+  Moonlight and stars, dark interiors lit by ceiling lamps, and a **flashlight** on every gun (T) that casts shadows.
+  Other players' lights shine through the dark with visible beams and blind you when pointed at you. Nobody is
+  seen beyond about 45 metres in the dark — unless their flashlight is on, which gives them away (bots included)
 - **Weather**: clear, rain, thunderstorm or fog on any map (the host picks it, or *Random*). Rain falls around you and
   stops under roofs, drops splash on the ground, streets get wet and reflective with puddles rippling in the rain, and
   footsteps splash outdoors. Storms bring gusting wind, rain curtains sweeping across the map, and lightning that lights
@@ -125,6 +130,7 @@ Tools like [playit.gg](https://playit.gg), [ngrok](https://ngrok.com) (`ngrok ht
 | Scoreboard | Tab (hold) | View / Share (hold) |
 | Chat all / team | Y (or Enter) / U | — |
 | Inspect weapon | V | — |
+| Flashlight (night) | T | — |
 | Menu | Esc | Menu / Options |
 
 Grenades: **left click** throws hard, **right click** lobs underhand. Knife: left click slash, right click heavy stab (backstabs are lethal).
@@ -141,8 +147,8 @@ All keys can be rebound in **Settings → Keys**.
 - **Free For All** — everyone against everyone, first to the kill limit.
 - **Gun Game** — every kill gives you the next weapon; the last one is the knife. Getting knifed sends you back a level.
 
-The host can change rounds, round time, kill/time limits, friendly fire, the **weather** (Clear / Rain / Thunderstorm /
-Fog / Random), and fill teams with **bots** (Easy / Normal / Hard / Expert) from the lobby. *Easy* is relaxed, *Normal* is a fair fight for casual players, *Hard* punishes mistakes and *Expert*
+The host can change rounds, round time, kill/time limits, friendly fire, the **time of day** (Map default / Day /
+Night / Random), the **weather** (Clear / Rain / Thunderstorm / Fog / Random), and fill teams with **bots** (Easy / Normal / Hard / Expert) from the lobby. *Easy* is relaxed, *Normal* is a fair fight for casual players, *Hard* punishes mistakes and *Expert*
 has near-pro reactions and aim — use it when you want a real challenge. Players can join a match that is already running.
 
 ### Weapons
