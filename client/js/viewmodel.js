@@ -8,16 +8,18 @@ import { WEAPONS } from '../shared/weapons.js';
 // Hip position: bottom-right of the screen like CS2, barrels angled only slightly inwards so the gun
 // stays out of the way of what you're looking at.
 const HIP = {
-  pistol: [0.165, -0.18, -0.44],
-  smg: [0.2, -0.2, -0.45],
-  rifle: [0.235, -0.215, -0.52],
-  shotgun: [0.235, -0.215, -0.52],
-  sniper: [0.235, -0.215, -0.52],
+  pistol: [0.125, -0.135, -0.33],
+  smg: [0.145, -0.145, -0.34],
+  rifle: [0.168, -0.152, -0.36],
+  shotgun: [0.168, -0.152, -0.36],
+  sniper: [0.17, -0.19, -0.42],
   knife: [0.2, -0.2, -0.38],
   grenade: [0.19, -0.19, -0.38],
   bomb: [0.06, -0.23, -0.42],
 };
-const BASE_YAW = { pistol: 0.03, smg: 0.06, rifle: 0.07, shotgun: 0.07, sniper: 0.07, knife: 0, grenade: 0, bomb: 0 };
+const BASE_YAW = { pistol: 0.09, smg: 0.17, rifle: 0.19, shotgun: 0.19, sniper: 0.15, knife: 0, grenade: 0, bomb: 0 };
+// muzzle tipped up a little so the stock drops out of view and the side of the gun faces the camera
+const BASE_PITCH = { pistol: 0.02, smg: 0.05, rifle: 0.06, shotgun: 0.06, sniper: 0.04 };
 const ADS_Z = { pistol: -0.42, smg: -0.42, rifle: -0.46, shotgun: -0.44, sniper: -0.4 };
 
 const ease = (t) => t * t * (3 - 2 * t);
@@ -361,7 +363,7 @@ export class ViewModel {
     let px = hip[0] + (adsPos[0] - hip[0]) * ads + bx + this.sway.x * 0.35 * (1 - ads * 0.7);
     let py = hip[1] + (adsPos[1] - hip[1]) * ads + by + breathe - this.landDip + this.sway.y * 0.25 * (1 - ads * 0.7);
     let pz = hip[2] + (adsPos[2] - hip[2]) * ads + this.kick * (1 - ads * 0.4);
-    let rx = this.kickRot * 0.09 + this.sway.y * 0.6 * (1 - ads * 0.6);
+    let rx = this.kickRot * 0.09 + this.sway.y * 0.6 * (1 - ads * 0.6) + (BASE_PITCH[kind] || 0) * yawK;
     // BodyCam: held low and near the centre, so the barrel needs less angle to point at the middle
     let ry = this.sway.x * 1.0 * (1 - ads * 0.6) + (BASE_YAW[kind] || 0) * yawK * (st.bodycam ? 0.45 : 1);
     let rz = this.sway.x * 0.6 - (st.crouch || 0) * 0.04 * (1 - ads) + bx * 1.2;

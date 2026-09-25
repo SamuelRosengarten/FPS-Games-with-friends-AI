@@ -253,6 +253,14 @@ function addSpecOcclusion(m) {
   m.customProgramCacheKey = () => 'spec-occlusion';
 }
 
+// Untextured material that shades like the level geometry: vertex colours carry the baked AO and the
+// indoor flag (room bounce), and it gets wet in the rain. Used by the props (props.js).
+export function plainWorldMaterial(params) {
+  const m = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0, ...params, vertexColors: true });
+  addSpecOcclusion(m);
+  return m;
+}
+
 // A few module workers that generate texture data in parallel (one material per job).
 class TexturePool {
   static get() {

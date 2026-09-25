@@ -11,11 +11,15 @@
 //   c  crate (1 m)       C  stacked crates (2 m)
 //   =  low cover (1 m)
 //   1-8 raised floor, n * 0.5 m high
+//   furniture (runs of the same glyph become one piece; shelves, counters and lockers back onto a wall):
+//   t  table / desk      s  shelving rack (2.15 m)   k  counter / cabinet (1 m)   l  locker bank (1.95 m)
+//   p  pallet stack      o  pillar up to the ceiling
 // Roofs are given separately as cell rectangles so crates etc. can be placed under them.
 //
 // Optional second storey (def.upper): a grid of the same size carved with
 //   ' ' no floor (air / stair well)   .  floor slab   #  wall   x  window   D  doorway
-//   w  breakable panel   c/C crates   =  parapet / low wall
+//   w  breakable panel   c/C crates   =  parapet / low wall   -  walkway with a steel railing on its open
+//   edges, and the furniture glyphs above
 // plus def.stairs: [{ r, c, dir: 'n'|'s'|'e'|'w', len, to }] (solid stepped flights, bottom cell first)
 // Zones may carry a 5th element 'upper' to restrict them to the second storey.
 
@@ -46,6 +50,29 @@ export class Grid {
 
 const WALLS = new Set(['#', '%']);
 const SOLIDISH = new Set(['#', '%', 'w', 'x', 'D']);
+
+// Furniture glyphs: collision boxes here, detailed models on the client (props.js).
+const FURN = {
+  t: { furn: 'table', depth: 0.9, h: 0.78, mat: 'wood', end: 0.22 },
+  s: { furn: 'shelf', depth: 0.62, h: 2.15, mat: 'metal', end: 0.08, wall: true },
+  k: { furn: 'counter', depth: 0.72, h: 0.98, mat: 'wood', end: 0.03, wall: true },
+  l: { furn: 'locker', depth: 0.52, h: 1.95, mat: 'metal', end: 0.06, wall: true },
+  p: { furn: 'pallets', depth: 1.05, h: 1.3, mat: 'crate', end: 0.4, single: true },
+};
+export const FURN_GLYPHS = new Set([...Object.keys(FURN), 'o']);
+
+// Vehicles and big props placed by centre cell: length / width and collision parts
+// [y0, y1, inset across, inset along, shift along (towards the front)].
+const PROP_PRESETS = {
+  car: { l: 4.45, w: 1.8, mat: 'metal', parts: [[0, 0.9, 0, 0, 0], [0.9, 1.42, 0.14, 1.05, -0.2]] },
+  van: { l: 5.1, w: 2.0, mat: 'metal', parts: [[0, 1.0, 0, 0, 0], [1.0, 2.1, 0.06, 0.35, -0.35]] },
+  dumpster: { l: 1.9, w: 1.15, mat: 'metal', parts: [[0, 1.22, 0, 0, 0]] },
+  generator: { l: 2.3, w: 1.1, mat: 'metal', parts: [[0, 1.45, 0, 0, 0]] },
+  forklift: { l: 2.5, w: 1.2, mat: 'metal', parts: [[0, 1.15, 0, 0, 0], [1.15, 2.2, 0.06, 0.75, -0.1]] },
+  hvac: { l: 1.7, w: 1.2, mat: 'metal', parts: [[0, 1.25, 0, 0, 0]] },
+  boxcar: { l: 12.4, w: 2.95, mat: 'containerRed', parts: [[1.05, 4.05, 0, 0, 0], [0, 1.05, 0.2, 4.9, 4.6], [0, 1.05, 0.2, 4.9, -4.6], [0.8, 1.05, 1.2, 0.5, 0]] },
+};
+export const PROP_KINDS = new Set(Object.keys(PROP_PRESETS));
 
 export function isOpenChar(ch) {
   return !WALLS.has(ch);
@@ -179,8 +206,16 @@ export function buildMap(def) {
     else add(cellMinX(c0), 0, cellMinZ(r0), cellMinX(c1 + 1), (+k[1]) * 0.5, cellMinZ(r1 + 1), mats.raised, { kind: 'floor' });
   });
 
-  // Secondary floor material (render only)
-  greedy((r, c) => (g.get(r, c) === ',' ? ',' : null), (k, r0, c0, r1, c1) => {
+  // Secondary floor material (render only); furniture standing on it keeps it underneath
+  const floor2 = (r, c) => {
+    const ch = g.get(r, c);
+    if (ch === ',') return true;
+    if (!FURN_GLYPHS.has(ch)) return false;
+    let n = 0;
+    for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) { const o = g.get(r + dr, c + dc); if (o === ',' || (FURN_GLYPHS.has(o) && o !== ch)) n++; }
+    return n >= 2;
+  };
+  greedy((r, c) => (floor2(r, c) ? ',' : null), (k, r0, c0, r1, c1) => {
     add(cellMinX(c0), 0, cellMinZ(r0), cellMinX(c1 + 1), 0.012, cellMinZ(r1 + 1), mats.floor2, { kind: 'decal', renderOnly: true });
   });
 
@@ -245,6 +280,62 @@ export function buildMap(def) {
     }
   }
 
+  // Furniture: runs of the same glyph along a row (or a column) become one piece; wall-hugging pieces are
+  // pushed against the wall beside them. Pillars reach the ceiling above them.
+  const placeFurniture = (G, fy, ceilAt, extra = {}) => {
+    const done = [];
+    for (let r = 0; r < rows; r++) done.push(new Array(cols).fill(false));
+    const solid = (r, c) => { const ch = G.get(r, c); return ch === '#' || ch === '%' || ch === 'x' || ch === 'w'; };
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const ch = G.get(r, c);
+        if (done[r][c]) continue;
+        if (ch === 'o') {
+          done[r][c] = true;
+          const cx = cellMinX(c) + cs / 2, cz = cellMinZ(r) + cs / 2;
+          add(cx - 0.3, fy, cz - 0.3, cx + 0.3, ceilAt(r, c), cz + 0.3, mats.pillar || mats.wall2 || 'concrete', { kind: 'pillar', ...extra });
+          continue;
+        }
+        const f = FURN[ch];
+        if (!f) continue;
+        let axis = 'x', len = 1;
+        if (!f.single) {
+          while (c + len < cols && G.get(r, c + len) === ch && !done[r][c + len]) len++;
+          if (len === 1) {
+            let lz = 1;
+            while (r + lz < rows && G.get(r + lz, c) === ch && !done[r + lz][c]) lz++;
+            if (lz > 1) { axis = 'z'; len = lz; }
+          }
+        }
+        for (let i = 0; i < len; i++) { if (axis === 'x') done[r][c + i] = true; else done[r + i][c] = true; }
+        let side = 0;
+        if (f.wall) {
+          if (axis === 'x') {
+            if (solid(r - 1, c)) side = -1;
+            else if (solid(r + 1, c)) side = 1;
+            else if (len === 1 && (solid(r, c - 1) || solid(r, c + 1))) { axis = 'z'; side = solid(r, c - 1) ? -1 : 1; }
+          } else if (solid(r, c - 1)) side = -1;
+          else if (solid(r, c + 1)) side = 1;
+        } else if (len === 1 && !f.single && (solid(r, c - 1) || solid(r, c + 1)) && !(solid(r - 1, c) || solid(r + 1, c))) axis = 'z';
+        const run0 = axis === 'x' ? cellMinX(c) : cellMinZ(r);
+        const run1 = run0 + len * cs;
+        const acr = axis === 'x' ? cellMinZ(r) : cellMinX(c);
+        let a0, a1;
+        if (side < 0) { a0 = acr + 0.04; a1 = a0 + f.depth; }
+        else if (side > 0) { a1 = acr + cs - 0.04; a0 = a1 - f.depth; }
+        else { a0 = acr + (cs - f.depth) / 2; a1 = a0 + f.depth; }
+        let e0 = f.end, e1 = f.end;
+        if (f.single) { const j = (hash2(r * 13, c * 7) - 0.5) * 0.5; e0 += j; e1 -= j; const k = (hash2(c * 5, r * 3) - 0.5) * 0.4; a0 += k; a1 += k; }
+        const [minx, maxx, minz, maxz] = axis === 'x' ? [run0 + e0, run1 - e1, a0, a1] : [a0, a1, run0 + e0, run1 - e1];
+        add(minx, fy, minz, maxx, fy + f.h, maxz, f.mat, { kind: 'furn', furn: f.furn, axis, side, seed: hash2(r * 31 + 7, c * 17 + 3), ...extra });
+      }
+    }
+  };
+  placeFurniture(g, 0, (r, c) => {
+    if (ug && ug.get(r, c) !== ' ') return (U.floorY ?? roofH + 0.3) - (U.slab ?? 0.3);
+    return roofed[r][c] ? roofH : Math.min(wallH, 3.6);
+  });
+
   if (U) {
     const fy = U.floorY ?? roofH + 0.3;
     const slab = U.slab ?? 0.3;
@@ -258,7 +349,7 @@ export function buildMap(def) {
       add(cellMinX(c0), fy - slab, cellMinZ(r0), cellMinX(c1 + 1), fy, cellMinZ(r1 + 1), umats.slab, { kind: 'slab', floorY: fy });
     });
     // floor finish (render only) on walkable upper cells
-    greedy((r, c) => ('.cC=,'.includes(ug.get(r, c)) ? 'F' : null), (k, r0, c0, r1, c1) => {
+    greedy((r, c) => ('.cC=,-'.includes(ug.get(r, c)) || FURN_GLYPHS.has(ug.get(r, c)) ? 'F' : null), (k, r0, c0, r1, c1) => {
       add(cellMinX(c0), fy, cellMinZ(r0), cellMinX(c1 + 1), fy + 0.012, cellMinZ(r1 + 1), umats.floor, { kind: 'decal', renderOnly: true, floorY: fy });
     });
     // upper walls
@@ -269,6 +360,20 @@ export function buildMap(def) {
     greedy((r, c) => (ug.get(r, c) === '=' ? '=' : null), (k, r0, c0, r1, c1) => {
       add(cellMinX(c0) + 0.2, fy, cellMinZ(r0) + 0.2, cellMinX(c1 + 1) - 0.2, fy + 1.05, cellMinZ(r1 + 1) - 0.2, umats.wall, { kind: 'cover', floorY: fy });
     });
+    // walkway railings ('-'): a walkable cell with a thin steel balustrade on each edge that faces a drop
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (ug.get(r, c) !== '-') continue;
+        const mx = cellMinX(c), mz = cellMinZ(r), t = 0.06;
+        const air = (dr, dc) => ug.inside(r + dr, c + dc) && ug.get(r + dr, c + dc) === ' ';
+        const extra = { kind: 'rail', floorY: fy };
+        if (air(-1, 0)) add(mx, fy, mz, mx + cs, fy + 1.05, mz + t, umats.rail || 'metal', extra);
+        if (air(1, 0)) add(mx, fy, mz + cs - t, mx + cs, fy + 1.05, mz + cs, umats.rail || 'metal', extra);
+        if (air(0, -1)) add(mx, fy, mz, mx + t, fy + 1.05, mz + cs, umats.rail || 'metal', extra);
+        if (air(0, 1)) add(mx + cs - t, fy, mz, mx + cs, fy + 1.05, mz + cs, umats.rail || 'metal', extra);
+      }
+    }
+    placeFurniture(ug, fy, (r, c) => (upperRoofed[r][c] ? fy + (U.roofHeight ?? uwh - 0.35) : fy + 3.2), { floorY: fy });
     // upper roofs
     for (const [r0, c0, r1, c1] of ug.roofs) {
       add(cellMinX(c0), fy + (U.roofHeight ?? uwh - 0.35), cellMinZ(r0), cellMinX(c1 + 1), top, cellMinZ(r1 + 1), umats.roof || mats.roof, { kind: 'roof', floorY: fy });
@@ -341,8 +446,23 @@ export function buildMap(def) {
     }
   }
 
-  // Props in cell coordinates: { r, c, rows, cols, h, y, mat, inset }
+  // Props in cell coordinates: { r, c, rows, cols, h, y, mat, inset }, or a preset (car, van, dumpster,
+  // generator, forklift, hvac, boxcar) centred on cell r, c: { kind, r, c, dir: 'x' | 'z', flip, color, y, dx, dz }
+  let propId = 1;
   for (const p of def.props || []) {
+    const pre = PROP_PRESETS[p.kind];
+    if (pre) {
+      const cx = cellMinX(p.c) + cs / 2 + (p.dx || 0), cz = cellMinZ(p.r) + cs / 2 + (p.dz || 0), y = p.y ?? 0;
+      const alongX = (p.dir || 'x') === 'x', f = p.flip ? -1 : 1;
+      const pid = propId++;
+      pre.parts.forEach(([y0, y1, iw, il, sh], i) => {
+        const l0 = -pre.l / 2 + il + sh * f, l1 = pre.l / 2 - il + sh * f, w0 = -pre.w / 2 + iw, w1 = pre.w / 2 - iw;
+        const [minx, maxx, minz, maxz] = alongX ? [cx + l0, cx + l1, cz + w0, cz + w1] : [cx + w0, cx + w1, cz + l0, cz + l1];
+        const info = i === 0 ? { main: true, cx, cz, y, l: pre.l, w: pre.w, dir: alongX ? 'x' : 'z', f, color: p.color, variant: p.variant, track: p.track } : {};
+        add(minx, y + y0, minz, maxx, y + y1, maxz, p.mat || pre.mat, { kind: p.kind, pid, ...info, ...(p.y ? { floorY: y } : {}) });
+      });
+      continue;
+    }
     const inset = p.inset ?? 0.1;
     const y = p.y ?? 0;
     add(cellMinX(p.c) + inset, y, cellMinZ(p.r) + inset, cellMinX(p.c + (p.cols ?? 1)) - inset, y + p.h, cellMinZ(p.r + (p.rows ?? 1)) - inset, p.mat, { kind: p.kind || 'prop' });
@@ -354,7 +474,9 @@ export function buildMap(def) {
     if (ch >= '1' && ch <= '8') return (+ch) * 0.5;
     return 0;
   };
+  const fountain = def.decor?.fountain;
   const spawnable = (r, c) => {
+    if (fountain && r >= fountain[0] && r <= fountain[2] && c >= fountain[1] && c <= fountain[3]) return false;
     const ch = g.get(r, c);
     return ch === '.' || ch === ',' || (ch >= '1' && ch <= '8') || ch === 'D';
   };

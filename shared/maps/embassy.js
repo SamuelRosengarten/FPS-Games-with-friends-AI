@@ -17,7 +17,7 @@ export default {
   roofTop: 3.6,
   mats: {
     wall: 'brick', wall2: 'concreteDark', building: 'sandstone', floor: 'stoneTiles', floor2: 'tiles',
-    raised: 'concrete', crate: 'crate', crate2: 'crateDark', low: 'concrete', roof: 'roof', lintel: 'plaster', destructible: 'woodPanel',
+    raised: 'concrete', crate: 'crate', crate2: 'crateDark', low: 'concrete', roof: 'roof', lintel: 'plaster', destructible: 'woodPanel', pillar: 'plaster',
   },
   upper: {
     floorY: 3.6,
@@ -37,16 +37,20 @@ export default {
       u.set(16, 14, 'D');
       u.set(16, 21, 'w'); u.set(16, 22, 'w');
       u.set(16, 25, 'D');
-      // library shelves, conference table
-      u.set(9, 11, 'C'); u.set(9, 16, 'C'); u.set(14, 11, 'C'); u.set(14, 16, 'C'); u.set(12, 13, 'c');
-      u.fill(11, 22, 12, 25, 'c');
-      u.set(9, 28, 'C'); u.set(14, 20, 'c');
+      // library: rows of bookshelves and reading tables | conference room: the long table, cabinets
+      u.fill(9, 11, 9, 13, 's'); u.fill(9, 15, 9, 16, 's'); u.fill(14, 11, 14, 13, 's'); u.fill(14, 15, 14, 16, 's');
+      u.fill(11, 12, 11, 13, 't'); u.fill(12, 15, 12, 16, 't'); u.fill(8, 10, 8, 11, 'k');
+      u.fill(11, 22, 11, 25, 't'); u.fill(12, 22, 12, 25, 't');
+      u.fill(8, 27, 8, 28, 'l'); u.fill(15, 19, 15, 20, 'k'); u.set(14, 28, 'C'); u.set(9, 20, 'c'); u.set(14, 24, 'o');
       // atrium over the lobby with a parapet ring
       u.fill(17, 15, 22, 23, '=');
       u.fill(18, 16, 21, 22, ' ');
       // stair well (inside staircase runs north along the east wall)
       u.fill(19, 29, 22, 29, ' ');
       u.fill(19, 28, 22, 28, '=');
+      // gallery offices around the atrium
+      u.fill(18, 11, 18, 12, 't'); u.fill(21, 11, 21, 12, 't'); u.fill(23, 11, 23, 13, 's');
+      u.fill(17, 25, 17, 26, 'k'); u.set(20, 25, 't'); u.fill(23, 24, 23, 26, 's'); u.set(23, 21, 'c');
       // windows and doors in the outer walls
       u.set(7, 12, 'x'); u.set(7, 15, 'x'); u.set(7, 22, 'x'); u.set(7, 26, 'x');
       u.set(11, 9, 'x'); u.set(19, 9, 'x');
@@ -102,36 +106,57 @@ export default {
     g.set(20, 9, 'D');
     g.set(24, 19, 'D'); g.set(24, 20, 'D'); // main entrance
     g.set(24, 13, 'x'); g.set(24, 26, 'x');
-    // garage: van-sized block and crates
-    g.set(9, 11, 'C'); g.set(14, 11, 'c'); g.set(14, 12, 'C'); g.set(9, 16, 'c');
-    // offices: desks
-    g.set(9, 25, 'c'); g.set(9, 27, 'c'); g.set(13, 25, 'c'); g.set(13, 28, 'c');
-    // centre hall
-    g.set(12, 20, 'c');
-    // lobby: reception desk and planters under the atrium
-    g.fill(18, 18, 18, 20, '=');
+    // garage (B): workbench, tool racks, lockers, crates, a pillar; a car parked inside (props)
+    g.fill(8, 10, 8, 11, 'k'); g.fill(8, 15, 8, 16, 's'); g.fill(15, 15, 15, 16, 'l');
+    g.set(14, 11, 'c'); g.set(14, 12, 'C'); g.set(9, 13, 'p'); g.set(11, 12, 'o');
+    // offices: rows of desks, filing cabinets
+    g.fill(9, 24, 9, 25, 't'); g.fill(9, 27, 9, 28, 't'); g.fill(12, 24, 12, 25, 't'); g.fill(12, 27, 12, 28, 't');
+    g.fill(15, 27, 15, 29, 'l'); g.set(8, 29, 's');
+    // centre hall: security desk, lockers
+    g.set(12, 20, 'c'); g.set(14, 19, 'k'); g.fill(8, 19, 8, 20, 'l');
+    // lobby: reception desk, pillars round the atrium, planters, waiting area, shelves
+    g.fill(18, 18, 18, 20, 'k');
     g.set(21, 16, '='); g.set(21, 22, '=');
-    g.set(22, 11, 'c'); g.set(18, 12, 'C');
+    g.set(17, 15, 'o'); g.set(17, 23, 'o'); g.set(22, 15, 'o'); g.set(22, 23, 'o');
+    g.set(20, 11, 't'); g.set(20, 27, 't'); g.fill(23, 10, 23, 12, 's'); g.fill(17, 26, 17, 28, 'k'); g.set(22, 11, 'c');
     // courtyard: fountain and planters
     g.fill(29, 18, 30, 21, '2');
     g.fill(27, 10, 27, 12, '='); g.fill(27, 27, 27, 29, '=');
     g.fill(32, 15, 32, 16, '='); g.fill(32, 23, 32, 24, '=');
     g.set(30, 8, 'C'); g.set(30, 31, 'C'); g.set(26, 14, 'c'); g.set(26, 25, 'c');
-    // west alley
-    g.set(9, 4, 'C'); g.set(15, 6, 'c'); g.fill(19, 2, 19, 3, '='); g.set(24, 5, 'C'); g.set(28, 3, 'c');
+    // west alley and the gardener's shed
+    g.set(9, 4, 'C'); g.set(15, 6, 'c'); g.fill(19, 2, 19, 3, '='); g.set(24, 5, 'C');
+    g.fill(25, 1, 29, 5, '%'); g.fill(26, 2, 28, 4, ',');
+    g.set(25, 3, 'D'); g.set(27, 5, 'D'); g.set(29, 3, 'x');
+    g.roof(25, 1, 29, 5);
+    g.fill(26, 2, 26, 3, 's'); g.set(28, 2, 'p');
+    // guard house at the south gate
+    g.fill(30, 30, 34, 36, '%'); g.fill(31, 31, 33, 35, ',');
+    g.set(30, 32, 'D'); g.set(32, 30, 'D'); g.set(30, 34, 'x'); g.set(32, 36, 'x');
+    g.roof(30, 30, 34, 36);
+    g.set(31, 35, 'k'); g.fill(33, 31, 33, 32, 'l'); g.set(31, 33, 't');
     // east garden
     g.fill(7, 34, 7, 36, '='); g.set(21, 35, 'C'); g.set(26, 34, 'c'); g.set(4, 35, 'C');
     // north garden
     g.set(5, 10, 'C'); g.set(5, 29, 'C'); g.fill(5, 18, 5, 21, '=');
   },
   props: [
+    // car in the garage, parked cars and a van outside, garden generator, roof AC units
+    { kind: 'car', r: 12, c: 16, dir: 'z', color: 0x1d1f22 },
+    { kind: 'van', r: 12, c: 5, dir: 'z', color: 0xe4e2dc },
+    { kind: 'car', r: 29, c: 26, dir: 'x', color: 0x23324a },
+    { kind: 'car', r: 33, c: 9, dir: 'x', color: 0x9ea3a8 },
+    { kind: 'car', r: 22, c: 36, dir: 'z', color: 0x5a1d1d },
+    { kind: 'generator', r: 17, c: 35, dir: 'z' },
+    { kind: 'hvac', r: 9, c: 13, dir: 'x', y: 7.0 },
+    { kind: 'hvac', r: 9, c: 16, dir: 'x', y: 7.0 },
+    { kind: 'hvac', r: 20, c: 26, dir: 'z', y: 7.0 },
     // posts holding up the balcony and the outside landing
     { r: 27, c: 17, h: 3.3, mat: 'sandstoneLight', inset: 0.7 },
     { r: 27, c: 22, h: 3.3, mat: 'sandstoneLight', inset: 0.7 },
     { r: 10, c: 33, h: 3.3, mat: 'concrete', inset: 0.7 },
     { r: 13, c: 33, h: 3.3, mat: 'concrete', inset: 0.7 },
     { r: 3, c: 7, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
-    { r: 22, c: 36, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
     { r: 14, c: 17, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
     { r: 33, c: 2, h: 1.0, mat: 'metal', inset: 0.62, kind: 'barrel' },
   ],
@@ -152,6 +177,7 @@ export default {
     { r: 20, c: 19, level: 'upper', color: 0xfff0d8, intensity: 8, distance: 22 },
   ],
   decor: {
+    furniture: 'office',
     wallProps: { ac: 0.06, ebox: 0.03, pipe: 0.05, vent: 0.03 },
     clutter: { rocks: 20, trash: 10, cans: 6, pots: 6 },
     skyline: 'city',
