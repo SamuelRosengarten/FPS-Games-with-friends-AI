@@ -5,9 +5,12 @@ One friend runs the server, everyone else plays in the browser. Tuned for **Wind
 (an RTX 3060 runs the top *Epic* preset), also runs on MacBooks and weaker PCs, with **keyboard & mouse or a controller**.
 
 - **4 game modes**: Defuse (round-based bomb plant/defuse with economy), Team Deathmatch, Free For All, Gun Game
-- **5 maps**: *Sandstone* (desert town, long mid + tunnels), *Compound* (fortified building with breakable walls),
-  *Embassy* (two floors: atrium, balcony, inside and outside staircases), *Arena* (compact deathmatch),
-  *Depot* (small rail depot played at night: a dark warehouse, a container yard and a guard hut)
+- **5 maps**, each with furnished interiors (desks, racks, counters, lockers, pillars), vehicles and several levels:
+  - *Sandstone*: a desert town with colonnaded B tunnels, two-storey houses watching a long mid, a catwalk to A and lower tunnels.
+  - *Compound*: a two-storey fortified HQ with a server room, armoury, a floor hatch, outside staircases and breakable walls.
+  - *Embassy*: two floors with an atrium, library, conference room, a car in the garage, a balcony and outside stairs.
+  - *Arena*: four two-storey towers linked by a catwalk ring above a raised centre platform, made for deathmatch.
+  - *Depot*: a rail depot played at night, with a tall warehouse with racks and a mezzanine, a rail yard with a box car, offices, a workshop and a guard hut.
 - **Night mode**: play any map at night (the host picks *Time: Night*, or *Random*; Depot is night by default).
   Moonlight and stars, dark interiors lit by ceiling lamps, and a **flashlight** on every gun (T) that casts shadows.
   Other players' lights shine through the dark with visible beams and blind you when pointed at you. Nobody is
@@ -42,8 +45,9 @@ One friend runs the server, everyone else plays in the browser. Tuned for **Wind
   with mesas, factories with smoking stacks, a city of towers, forested hills), detailed map dressing (windows, palms and
   grass swaying in the wind, waving flags, a fountain, rooftop clutter, AC units, pipes, wires, graffiti, puddles, rocks,
   litter, pallets, tyres…), real stacked sandbags, oil drums, a box truck, shipping containers with door hardware,
-  parallax-mapped bricks, stone, tiles and planks with real depth on Ultra and Epic, detailed weapon models (extruded frames,
-  serrations, scopes) with wood grain, brushed/scratched metal and stippled polymer, gloved hands with real fingers,
+  parallax-mapped bricks, stone, tiles and planks with real depth on Ultra and Epic, realistic real-scale weapon models
+  (Picatinny rails, pins, ejection ports, engraved markings, holographic and red-dot sights, scopes with knurled turrets)
+  with worn edges, varnished wood, anodised and parkerised metal and stippled polymer, gloved hands with real fingers,
   shell casings, blood
   splatter, fireballs, dust motes, and a dynamic-resolution system with automatic effect fallbacks that keeps you
   **above 60 FPS**
@@ -157,7 +161,7 @@ has near-pro reactions and aim — use it when you want a real challenge. Player
 |---|---|
 | Pistols | P9 Striker (Attacker default), Warden P2 (Defender default), Magnum .50 |
 | SMGs & heavy | Rattler SMG, Hornet SMG, Breacher 12 shotgun (great for breaking walls) |
-| Rifles | Marauder, Striker AR (one-tap headshots), Guardian M4 (red dot, easier recoil) |
+| Rifles | Marauder (Galil-style, red dot), Striker AR (AK, one-tap headshots), Guardian M4 (holographic sight, easier recoil) |
 | Snipers | Kestrel (light, fast), Longbow (one shot to the body) |
 | Gear | Kevlar, Kevlar + Helmet, Defuse kit (Defenders) |
 | Grenades | Frag, Flashbang, Smoke, Breach charge (Attackers in Defuse: sticks to walls and blows reinforced walls open) |
@@ -260,11 +264,15 @@ node tools/bot-report.js sandstone defuse hard 3   # bot quality metrics: accura
   site entrances, holding angles, hidden staging points, post-plant spots (`tactics.js`) — and navigation mesh (`nav.js`)
 - `shared/` — code used by both server and browser: constants, weapons, physics & hitboxes, maps (grid-based map format in `shared/maps/`)
 - `client/` — the browser game: renderer & post-processing (`graphics.js`), procedural textures, world, models, viewmodel,
-  effects, synthesized audio, input (keyboard/mouse/gamepad), HUD and menus. Characters are built in `character.js`
-  on the shared surface-detail material and geometry builder in `surface.js`. `client/dev/` is a small model viewer
-  (`/dev/?view=players`, `?view=weapons`, `?view=vm&w=ar`, `?view=map&map=compound&cam=x,y,z,yaw,pitch`).
+  effects, synthesized audio, input (keyboard/mouse/gamepad), HUD and menus. Weapon models are built in `guns.js`,
+  characters in `character.js` on the shared surface-detail material and geometry builder in `surface.js`, and map
+  furniture and vehicles in `props.js`. `client/dev/` is a small model viewer (`/dev/?view=players`, `?view=weapons`,
+  `?view=gun&w=m4`, `?view=vm&w=ar`, `?view=map&map=compound&cam=x,y,z,yaw,pitch`).
 - Maps are ASCII-style grids carved with a few helper calls — see `shared/maps/sandstone.js`, and `node tools/print-map.js` to preview.
-  A map can add a second floor (`upper` grid) and staircases (`stairs`) — see `shared/maps/embassy.js`. Cosmetic dressing is
+  A map can add a second floor (`upper` grid, with `-` for railed walkways) and staircases (`stairs`) — see
+  `shared/maps/embassy.js`. Furniture is placed with grid letters (`t` table, `s` shelves, `k` counter, `l` lockers,
+  `p` pallets, `o` pillar) and vehicles as `props` presets (`car`, `van`, `dumpster`, `generator`, `forklift`, `hvac`,
+  `boxcar`) — see `shared/maps/builder.js` and `shared/maps/depot.js`. Cosmetic dressing is
   configured per map in `decor` and generated by `client/js/decor.js` (the distant scenery by `client/js/skyline.js`).
 
 Three.js (MIT) is vendored in `client/vendor/three` so the game works offline on a LAN.
