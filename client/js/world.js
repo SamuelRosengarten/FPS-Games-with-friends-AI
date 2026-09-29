@@ -6,6 +6,39 @@ const ZERO_SCALE = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const STRIPS = [0, 0.35, 1.1, 2.4];
 
+// Boxes whose side faces lie in the same plane, facing the same way and overlapping (a floor slab ending
+// flush with a wall's outer face) would draw two surfaces at exactly the same depth, which flicker in
+// stripes (z-fighting). The box with the lower priority pulls that face 1 cm back into itself, so only
+// one surface is visible there.
+const PULL = 0.01;
+const rank = (b) => (b.kind === 'wall' ? 0 : 1);
+function pullBackCoplanar(boxes) {
+  const out = boxes.map((b) => ({ ...b, min: [...b.min], max: [...b.max] }));
+  const overlap = (a, b, ax) => Math.min(a.max[ax], b.max[ax]) - Math.max(a.min[ax], b.min[ax]) > 0.01;
+  // another box butts against this face from outside (pulling it back would open a slit between them)
+  const abutted = (a, ax, side) => boxes.some((c) => c !== a && overlap(a, c, 1) && overlap(a, c, 2 - ax)
+    && Math.abs((side > 0 ? c.min[ax] : c.max[ax]) - (side > 0 ? a.max[ax] : a.min[ax])) < 1e-4);
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i];
+    for (let j = 0; j < boxes.length; j++) {
+      if (i === j) continue;
+      const b = boxes[j];
+      const ra = rank(a), rb = rank(b);
+      if (rb > ra || (rb === ra && j > i)) continue; // only yield to walls, or to earlier boxes of the same rank
+      if (a.mat === b.mat) continue; // same texture in the same place: nothing to see
+      // Only vertical faces: floors, ceilings and wall tops meet other boxes edge to edge, and moving a
+      // whole horizontal face would open a slit of light along those joints.
+      for (const ax of [0, 2]) {
+        const o = 2 - ax;
+        if (!overlap(a, b, 1) || !overlap(a, b, o)) continue;
+        if (Math.abs(a.max[ax] - b.max[ax]) < 1e-4 && !abutted(a, ax, 1)) out[i].max[ax] = a.max[ax] - PULL;
+        if (Math.abs(a.min[ax] - b.min[ax]) < 1e-4 && !abutted(a, ax, -1)) out[i].min[ax] = a.min[ax] + PULL;
+      }
+    }
+  }
+  return out;
+}
+
 export class WorldView {
   constructor(graphics, textures, map) {
     this.g = graphics;
@@ -63,19 +96,20 @@ export class WorldView {
     };
 
     const barrels = [];
+    const solids = [];
     for (const b of map.boxes) {
       if (b.destructible) continue;
       if (b.kind === 'barrel') { barrels.push(b); continue; }
       if (b.kind === 'truck' || b.kind === 'furn' || PROP_KINDS.has(b.kind)) continue; // modelled by the decor / props.js
       if (b.kind === 'ground') { this.buildGround(push(b.mat), b); continue; }
-      const buf = push(b.mat);
       // sandbag walls are dressed with individual bags by the decor; keep only a core to fill the gaps
       if (b.kind === 'cover' && b.mat === 'sandbag') {
-        this.addBox(buf, { ...b, min: [b.min[0] + 0.12, b.min[1], b.min[2] + 0.12], max: [b.max[0] - 0.12, b.max[1] - 0.07, b.max[2] - 0.12] });
+        solids.push({ ...b, min: [b.min[0] + 0.12, b.min[1], b.min[2] + 0.12], max: [b.max[0] - 0.12, b.max[1] - 0.07, b.max[2] - 0.12] });
         continue;
       }
-      this.addBox(buf, b);
+      solids.push(b);
     }
+    for (const b of pullBackCoplanar(solids)) this.addBox(push(b.mat), b);
 
     for (const [matName, buf] of byMat) {
       if (!buf.pos.length) continue;

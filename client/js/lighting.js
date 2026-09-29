@@ -34,6 +34,8 @@ const FS = /* glsl */`
   uniform vec3 uNoiseScale, uWindOff, uAmbCol;
   uniform float uHetero, uExt, uMist;
   uniform int uDebug;           // 1: reflectivity mask, 2: reflections only, 3: scattered light only
+  uniform sampler2D tVol;       // half-resolution scattering: rgb in-scattered light, a transmittance
+  uniform vec2 uVolSize;
   varying vec2 vUv;
 
   vec3 viewPos(vec2 uv, float z) {
@@ -41,6 +43,29 @@ const FS = /* glsl */`
     return p.xyz / p.w;
   }
   float ign(vec2 p, float k) { return fract(52.9829189 * fract(dot(p + 5.588238 * (uFrame + k), vec2(0.06711056, 0.00583715)))); }
+
+#if VOL_STEPS > 0 && !VOL_PASS
+  // Depth-aware upsampling of the half-resolution scattering: of the four nearest low-res texels, the
+  // ones on the same surface as this pixel count, so light shafts and fog stay sharp at silhouettes.
+  vec4 volUpsample(vec2 uv, float zc) {
+    vec2 p = uv * uVolSize - 0.5;
+    vec2 b = floor(p), f = p - b;
+    vec4 sum = vec4(0.0);
+    float ws = 0.0;
+    float tol = 0.1 + 0.03 * abs(zc);
+    for (int j = 0; j < 2; j++) {
+      for (int i = 0; i < 2; i++) {
+        vec2 t = clamp((b + vec2(float(i), float(j)) + 0.5) / uVolSize, vec2(0.0), vec2(1.0));
+        float zt = viewPos(t, texture2D(tDepth, t).r).z;
+        float bw = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
+        float w = (bw + 1e-3) / (1.0 + abs(zt - zc) / tol * 8.0);
+        sum += texture2D(tVol, t) * w;
+        ws += w;
+      }
+    }
+    return sum / ws;
+  }
+#endif
 
 #if VOL_STEPS > 0
   float sunVisible(vec3 p) {
@@ -139,7 +164,7 @@ const FS = /* glsl */`
     }
 #endif
 
-#if VOL_STEPS > 0
+#if VOL_STEPS > 0 && VOL_PASS
     vec3 wp = (uCamWorld * vec4(vp, 1.0)).xyz;
     vec3 ray = wp - uCamPos;
     float dist = length(ray);
@@ -163,8 +188,12 @@ const FS = /* glsl */`
     }
     // sunlight scattered towards the camera, plus sky light scattered by the haze (makes fog banks and
     // rain curtains visible under an overcast sky)
-    col = col * exp(-od * uExt) + uSunCol * (acc * phase) + uAmbCol * accA;
-    if (uDebug == 3) dbg = uSunCol * (acc * phase) * 8.0;
+    gl_FragColor = vec4(uSunCol * (acc * phase) + uAmbCol * accA, exp(-od * uExt));
+    return;
+#elif VOL_STEPS > 0
+    vec4 vol = volUpsample(vUv, vp.z);
+    col = col * vol.a + vol.rgb;
+    if (uDebug == 3) dbg = vol.rgb * 8.0;
 #endif
 
     gl_FragColor = vec4(uDebug == 0 ? col : uDebug == 1 ? vec3(1.0 - texture2D(tMask, vUv).a) : dbg, 1.0);
@@ -237,9 +266,7 @@ export class ScreenLighting {
   constructor({ volSteps = 16, ssr = true } = {}) {
     this.volSteps = volSteps;
     this.ssr = ssr;
-    this.mat = new THREE.ShaderMaterial({
-      defines: { VOL_STEPS: volSteps, SSR: ssr ? 1 : 0, SSR_STEPS: 20 },
-      uniforms: {
+    const uniforms = {
         tColor: { value: null }, tMask: { value: null }, tDepth: { value: null }, tShadow: { value: null }, tRoof: { value: null },
         uProj: { value: new THREE.Matrix4() }, uInvProj: { value: new THREE.Matrix4() },
         uCamWorld: { value: new THREE.Matrix4() }, uShadowMat: { value: new THREE.Matrix4() },
@@ -249,11 +276,27 @@ export class ScreenLighting {
         tNoise3D: { value: noise3D() }, uNoiseScale: { value: new THREE.Vector3(0.05, 0.08, 0.05) }, uWindOff: { value: new THREE.Vector3() },
         uAmbCol: { value: new THREE.Color(0, 0, 0) }, uHetero: { value: 0.25 }, uExt: { value: 0.25 }, uMist: { value: 0 },
         uDebug: { value: 0 }, uDensity: { value: 0.007 }, uIndoor: { value: 3 }, uHeight: { value: 18 }, uGround: { value: 0 }, uMaxDist: { value: 45 },
-      },
-      vertexShader: VS, fragmentShader: FS, depthTest: false, depthWrite: false,
+        tVol: { value: null }, uVolSize: { value: new THREE.Vector2(1, 1) },
+    };
+    // full resolution: reflections, and the scattering upsampled onto the image
+    this.mat = new THREE.ShaderMaterial({
+      defines: { VOL_STEPS: volSteps, SSR: ssr ? 1 : 0, SSR_STEPS: 20, VOL_PASS: 0 },
+      uniforms, vertexShader: VS, fragmentShader: FS, depthTest: false, depthWrite: false,
     });
     this.quad = new FullScreenQuad(this.mat);
     this.rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false });
+    // half resolution (a quarter of the pixels): the volumetric ray march, the expensive part. The
+    // temporal AA averages its per-pixel noise as before.
+    this.volMat = null;
+    this.volRT = null;
+    if (volSteps > 0) {
+      this.volMat = new THREE.ShaderMaterial({
+        defines: { VOL_STEPS: volSteps, SSR: 0, SSR_STEPS: 1, VOL_PASS: 1 },
+        uniforms, vertexShader: VS, fragmentShader: FS, depthTest: false, depthWrite: false,
+      });
+      this.volRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false });
+      uniforms.tVol.value = this.volRT.texture;
+    }
     this.roofTex = null;
     this.sun = null;
   }
@@ -261,6 +304,11 @@ export class ScreenLighting {
   setSize(w, h) {
     this.rt.setSize(w, h);
     this.mat.uniforms.uSize.value.set(w, h);
+    if (this.volRT) {
+      const vw = Math.max(1, Math.ceil(w / 2)), vh = Math.max(1, Math.ceil(h / 2));
+      this.volRT.setSize(vw, vh);
+      this.mat.uniforms.uVolSize.value.set(vw, vh);
+    }
   }
 
   // Per-map settings: roof layout (dustier air indoors) and the theme's haze.
@@ -312,6 +360,12 @@ export class ScreenLighting {
       u.tShadow.value = map ? map.texture : null;
       u.uShadowMat.value.copy(sun.shadow.matrix);
     }
+    if (this.volMat) {
+      renderer.setRenderTarget(this.volRT);
+      this.quad.material = this.volMat;
+      this.quad.render(renderer);
+      this.quad.material = this.mat;
+    }
     renderer.setRenderTarget(this.rt);
     this.quad.render(renderer);
     return this.rt.texture;
@@ -319,8 +373,10 @@ export class ScreenLighting {
 
   dispose() {
     this.mat.dispose();
+    this.volMat?.dispose();
     this.quad.dispose();
     this.rt.dispose();
+    this.volRT?.dispose();
     this.roofTex?.dispose();
   }
 }
