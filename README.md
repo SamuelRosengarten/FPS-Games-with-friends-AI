@@ -2,15 +2,17 @@
 
 A self-hosted, multiplayer tactical FPS for you and your friends — inspired by Counter-Strike 2 and Rainbow Six Siege.
 One friend runs the server, everyone else plays in the browser. Tuned for **Windows PCs with NVIDIA RTX graphics**
-(an RTX 3060 runs the top *Epic* preset), also runs on MacBooks and weaker PCs, with **keyboard & mouse or a controller**.
+(an RTX 3060 runs the *Ultra* preset smoothly, an RTX 3070 and up *Epic*), also runs on MacBooks and weaker PCs, with **keyboard & mouse or a controller**.
 
 - **4 game modes**: Defuse (round-based bomb plant/defuse with economy), Team Deathmatch, Free For All, Gun Game
-- **5 maps**, each with furnished interiors (desks, racks, counters, lockers, pillars), vehicles and several levels:
+- **6 maps**, each with furnished interiors (desks, racks, counters, lockers, pillars), vehicles and several levels:
   - *Sandstone*: a desert town with colonnaded B tunnels, two-storey houses watching a long mid, a catwalk to A and lower tunnels.
   - *Compound*: a two-storey fortified HQ with a server room, armoury, a floor hatch, outside staircases and breakable walls.
   - *Embassy*: two floors with an atrium, library, conference room, a car in the garage, a balcony and outside stairs.
   - *Arena*: four two-storey towers linked by a catwalk ring above a raised centre platform, made for deathmatch.
   - *Depot*: a rail depot played at night, with a tall warehouse with racks and a mezzanine, a rail yard with a box car, offices, a workshop and a guard hut.
+  - *Gulag*: a prison camp under a cold grey sky, with a cell block (A), a tiled shower hall fighting for mid, the mess hall (B)
+    and two guard towers over the exercise yards.
 - **Night mode**: play any map at night (the host picks *Time: Night*, or *Random*; Depot is night by default).
   Moonlight and stars, dark interiors lit by ceiling lamps, and a **flashlight** on every gun (T) that casts shadows.
   Other players' lights shine through the dark with visible beams and blind you when pointed at you. Nobody is
@@ -35,11 +37,11 @@ One friend runs the server, everyone else plays in the browser. Tuned for **Wind
   ballistic glasses, balaclavas and shemaghs, plate carriers with magazine / radio / admin pouches, battle belts,
   holsters, knee and elbow pads, gloves and boots — with camouflage, fabric weave, MOLLE webbing, skin, leather and
   rubber surface detail (Attackers in desert multicam, Defenders in navy)
-- **High-end graphics** (Epic preset for RTX 3060 and up): 8K contact-hardening soft shadows (sharp at the
+- **High-end graphics** (Epic preset for RTX 3070 and up, Ultra for RTX 3060 / 4060): 4K contact-hardening soft shadows (sharp at the
   base, softer further from the caster), volumetric sunlight (light shafts and a glowing sun haze, dustier indoors),
   screen-space reflections on water and puddles, eye adaptation between bright streets and dark rooms, bounce light
   inside buildings, temporal anti-aliasing with DLSS-style upscaling and supersampling modes,
-  full-resolution ambient occlusion (GTAO), 2048² textures on large surfaces, ambient light and reflections captured from
+  ambient occlusion (GTAO), 2048² textures on large surfaces, ambient light and reflections captured from
   each map (sunlit sand and walls bounce warm light), aerial perspective (haze that glows towards the sun and thins with
   altitude), bloom, physically based materials, sky lighting, per-map colour grading, a distant skyline around every map (desert town
   with mesas, factories with smoking stacks, a city of towers, forested hills), detailed map dressing (windows, palms and
@@ -186,11 +188,13 @@ crosshair (switch it back on with *Crosshair in BodyCam view*). Scoped weapons s
 
 Open **Settings → Video**:
 
-- **Auto** picks a preset for your GPU. RTX 2060 / 3060 / 4060 and up (and Radeon RX 6700 / 7700 and up) get **Epic**:
-  8192² contact-hardening soft shadows, full-resolution GTAO ambient occlusion, temporal anti-aliasing, 2048² textures
-  on large surfaces (1024² elsewhere), 16× anisotropic filtering, a 512² environment probe, volumetric sunlight
-  (16 steps), screen-space reflections, eye adaptation and bloom.
-  Other RTX / recent Radeon cards get **Ultra** (4096² shadows, half-resolution AO, 1024² textures, lighter volumetrics).
+- **Auto** picks a preset for your GPU. RTX 3070 / 4070 / 5060 and up (and Radeon RX 6800 / 7800 / 9070 and up) get
+  **Epic**: 4096² contact-hardening soft shadows, GTAO ambient occlusion at 80% resolution, temporal anti-aliasing,
+  2048² textures on large surfaces (1024² elsewhere), 16× anisotropic filtering, a 512² environment probe, volumetric
+  sunlight (12 steps), screen-space reflections, eye adaptation and bloom.
+  Other RTX cards (RTX 2060 / 3060 / 4060 ...) and recent Radeons get **Ultra** (4096² shadows, half-resolution AO,
+  1024² textures, lighter volumetrics, no reflections), which keeps them smooth at 1440p. You can still pick Epic by
+  hand: with *Upscaling → Quality* an RTX 3060 runs it well.
 - **Volumetric lighting**, **Screen-space reflections** and **Eye adaptation** can be switched off individually in
   *Settings → Video*. The first two need temporal AA, which smooths out their per-frame noise. If the frame rate drops,
   reflections and then volumetric lighting are the first effects the game switches off.

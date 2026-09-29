@@ -18,7 +18,7 @@ import { LensPass } from './lens.js';
 import { ROOM_BOUNCE } from './textures.js';
 
 // targetMP: megapixels the preset aims to render at the start (dynamic resolution then probes up/down)
-// ao: false | 'half' (0.6x resolution) | 'full' · aa: none | fxaa | smaa | msaa | taa (temporal, with upscaling)
+// ao: false | 'half' (0.6x resolution) | 'full' (0.8x resolution, more samples) · aa: none | fxaa | smaa | msaa | taa (temporal, with upscaling)
 // vol: volumetric light march steps (0 = off) · ssr: screen-space reflections · adapt: eye adaptation
 // flare: lens flare strength in the normal view (the BodyCam view always has a strong one)
 // (volumetric light and reflections need temporal AA to smooth their noise)
@@ -27,7 +27,7 @@ export const PRESETS = {
   medium: { label: 'Medium', pixelRatio: 1.0,  shadows: 1024, ao: false,  bloom: false, aa: 'fxaa', env: 0.45, particles: 0.75, targetMP: 2.2, grade: true, probe: 128, vol: 0, ssr: false, adapt: false, flare: 0 },
   high:   { label: 'High',   pixelRatio: 1.5,  shadows: 2048, ao: false,  bloom: true,  aa: 'smaa', env: 0.45, particles: 1, targetMP: 3.5, grade: true, probe: 128, vol: 0, ssr: false, adapt: true, flare: 0.3 },
   ultra:  { label: 'Ultra',  pixelRatio: 2.0,  shadows: 4096, ao: 'half', bloom: true,  aa: 'taa', env: 0.5, particles: 1, targetMP: 3.7, grade: true, probe: 256, vol: 10, ssr: false, adapt: true, flare: 0.35 },
-  epic:   { label: 'Epic (RTX)', pixelRatio: 2.0, shadows: 8192, ao: 'full', bloom: true, aa: 'taa', env: 0.5, particles: 1, targetMP: 4.2, grade: true, probe: 512, vol: 16, ssr: true, adapt: true, flare: 0.35 },
+  epic:   { label: 'Epic (RTX)', pixelRatio: 2.0, shadows: 4096, ao: 'full', bloom: true, aa: 'taa', env: 0.5, particles: 1, targetMP: 3.7, grade: true, probe: 512, vol: 12, ssr: true, adapt: true, flare: 0.35 },
 };
 
 // Internal render scale of each upscaling mode (temporal anti-aliasing only).
@@ -231,8 +231,10 @@ export function gpuName(renderer) {
 export function detectQuality(renderer) {
   const g = gpuName(renderer).toLowerCase();
   if (/swiftshader|llvmpipe|software|basic render/.test(g)) return 'low';
-  // RTX x060 and up (desktop or laptop), Radeon RX 6700 / 7700 / 9070 class and up
-  if (/rtx\s*\d{1,2}0[6-9]0|rx\s*(6[7-9]|7[7-9]|9[0-9])\d{2}/.test(g)) return 'epic';
+  // Epic: RTX x070 and up (and the 50 series' 5060 and up), Radeon RX 6800 / 7800 / 9070 class and up.
+  // x050 / x060 cards (RTX 3060, 4060 ...) get Ultra: Epic's reflections and extra effects would hold
+  // them well under a smooth frame rate at 1440p.
+  if (/rtx\s*\d{1,2}0[7-9]0|rtx\s*50[6-9]0|rx\s*(6[89]|7[89]|9[0-9])\d{2}/.test(g)) return 'epic';
   if (/rtx|radeon rx [5-9]\d{3}|rx 6\d{3}|rx 7\d{3}|arc a7|arc b/.test(g)) return 'ultra';
   if (/apple/.test(g)) return 'ultra';
   if (/gtx|radeon|rx |arc/.test(g)) return 'high';
@@ -415,7 +417,9 @@ export class Graphics {
       // world at internal resolution (+ AO) -> temporal resolve at output resolution -> effects -> weapon
       const temporal = new TemporalPass(this.scene, this.camera, { fxScene: this.fxScene });
       if (aoOn) {
-        const gtao = p.ao === 'full' ? this.makeGtao(1, 16) : this.makeGtao(0.6, 12);
+        // (full-resolution AO with 16 samples cost more than the whole rest of the frame on mid-range cards,
+        // for a difference only visible in still screenshots)
+        const gtao = p.ao === 'full' ? this.makeGtao(0.8, 12) : this.makeGtao(0.6, 12);
         gtao.setGBuffer(temporal.sceneRT.depthTexture); // normals are rebuilt from the scene depth
         temporal.gtao = gtao;
         this.gtao = gtao;

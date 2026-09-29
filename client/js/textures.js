@@ -66,15 +66,15 @@ vec2 pomUv = vMapUv;
   float pInv = inversesqrt(max(max(dot(pT, pT), dot(pB, pB)), 1e-24));
   pT *= pInv; pB *= pInv;
   vec3 vt = vec3(dot(pV, pT), dot(pV, pB), dot(pV, pN));
-  float pFade = 1.0 - smoothstep(10.0, 22.0, length(vViewPosition));
+  float pFade = 1.0 - smoothstep(8.0, 18.0, length(vViewPosition));
   if (pFade > 0.01 && vt.z > 0.05) {
-    float steps = floor(mix(28.0, 8.0, clamp(vt.z, 0.0, 1.0)));
+    float steps = floor(mix(20.0, 6.0, clamp(vt.z, 0.0, 1.0)));
     float layer = 1.0 / steps;
     vec2 delta = vt.xy / max(vt.z, 0.25) * uPomScale * pFade * layer;
     vec2 uv = vMapUv;
     float cur = 0.0;
     float depth = 1.0 - textureGrad(roughnessMap, uv, duv1, duv2).a;
-    for (int i = 0; i < 28; i++) {
+    for (int i = 0; i < 20; i++) {
       if (cur >= depth) break;
       uv -= delta;
       depth = 1.0 - textureGrad(roughnessMap, uv, duv1, duv2).a;

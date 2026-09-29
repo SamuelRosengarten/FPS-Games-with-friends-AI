@@ -24,7 +24,7 @@ const LOOKS = {
     sky: [0x5d6875, 0x8b949c, 0x6a6e70], cloud: 0x9ba2a9, cloudCover: 0.97, fogSky: 0.35,
     fog: [0x8c959c, 0.8], fogNear: 18, fogFar: 150, fogHeight: 60, fogMin: 0.82,
     exposure: 1.15, adaptKey: 0.55, sat: 0.78, contrast: 0.96, gain: [0.97, 1.0, 1.04],
-    vol: { density: 0.009, hetero: 0.6, noiseScale: [0.045, 0.02, 0.045], amb: 0.35, ext: 1, mist: 0.8 }, clouds: 1.8,
+    vol: { density: 0.009, hetero: 0.45, noiseScale: [0.022, 0.012, 0.022], amb: 0.35, ext: 1, mist: 0.8, indoor: -0.5 }, clouds: 1.8,
     rain: 1, wet: 1, wind: [1.2, 0.4], windSway: 1.4, lightning: false,
   },
   storm: {
@@ -33,7 +33,7 @@ const LOOKS = {
     sky: [0x363e48, 0x5f6770, 0x45484b], cloud: 0x6a7179, cloudCover: 1, fogSky: 0.5,
     fog: [0x68707a, 0.85], fogNear: 12, fogFar: 108, fogHeight: 55, fogMin: 0.92,
     exposure: 1.25, adaptKey: 0.35, sat: 0.68, contrast: 1.0, gain: [0.95, 0.99, 1.06],
-    vol: { density: 0.011, hetero: 0.7, noiseScale: [0.04, 0.018, 0.04], amb: 0.3, ext: 1, mist: 1.4 }, clouds: 4,
+    vol: { density: 0.011, hetero: 0.5, noiseScale: [0.02, 0.011, 0.02], amb: 0.3, ext: 1, mist: 1.4, indoor: -0.5 }, clouds: 4,
     rain: 1.9, wet: 1, wind: [4.2, 1.6], windSway: 2.4, lightning: true,
   },
   fog: {
@@ -42,7 +42,7 @@ const LOOKS = {
     sky: [0xa9afb4, 0xc3c6c6, 0xb0b2b0], cloud: 0xc8cbcc, cloudCover: 0.9, fogSky: 0.9,
     fog: [0xb8bcbc, 0.8], fogNear: 2, fogFar: 58, fogHeight: 26, fogMin: 0.97,
     exposure: 1.05, adaptKey: 0.9, sat: 0.84, contrast: 0.92, gain: [1.0, 1.0, 1.01],
-    vol: { density: 0.018, hetero: 0.85, noiseScale: [0.035, 0.09, 0.035], amb: 0.5, ext: 1, mist: 0.5 }, clouds: 0.6,
+    vol: { density: 0.018, hetero: 0.5, noiseScale: [0.018, 0.03, 0.018], amb: 0.5, ext: 1, mist: 0.5, indoor: -0.6 }, clouds: 0.6,
     rain: 0, wet: 0.35, wind: [0.6, 0.2], windSway: 0.6, lightning: false,
   },
 };

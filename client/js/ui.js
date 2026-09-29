@@ -267,7 +267,7 @@ export class UI {
         break;
       case 'video': {
         select('quality', 'Graphics quality', [['auto', 'Auto (recommended)'], ...Object.entries(PRESETS).map(([k, p]) => [k, p.label])],
-          'Epic (RTX 3060 and up): 8K soft shadows, full-resolution ambient occlusion, temporal AA · Ultra: 4K shadows, half-res AO');
+          'Epic (RTX 3070 and up): screen-space reflections, finer ambient occlusion and light shafts · Ultra (RTX 3060 / 4060): 4K soft shadows, volumetric light, half-res AO');
         select('aa', 'Anti-aliasing', Object.entries(AA_MODES), 'Temporal AA gives the cleanest image and enables upscaling');
         select('upscaling', 'Upscaling (temporal AA)', Object.entries(UPSCALING).map(([k, u]) => [k, u.label]),
           'Renders fewer pixels and rebuilds full resolution from previous frames, like DLSS / FSR (without the AI part)');

@@ -238,7 +238,7 @@ export class ScreenLighting {
     this.volSteps = volSteps;
     this.ssr = ssr;
     this.mat = new THREE.ShaderMaterial({
-      defines: { VOL_STEPS: volSteps, SSR: ssr ? 1 : 0, SSR_STEPS: 28 },
+      defines: { VOL_STEPS: volSteps, SSR: ssr ? 1 : 0, SSR_STEPS: 20 },
       uniforms: {
         tColor: { value: null }, tMask: { value: null }, tDepth: { value: null }, tShadow: { value: null }, tRoof: { value: null },
         uProj: { value: new THREE.Matrix4() }, uInvProj: { value: new THREE.Matrix4() },
