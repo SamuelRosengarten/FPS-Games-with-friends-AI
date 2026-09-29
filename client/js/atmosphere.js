@@ -66,12 +66,16 @@ function patchFog(o) {
   #define ATMO_H1 ${f(o.h1)}
   #define ATMO_HMIN ${f(o.hMin)}
 #endif`;
+  // Fog by the real distance to the camera, not the view-space depth three.js uses by default: with depth,
+  // things at the edges of a wide view get less fog than the same things straight ahead, so walls fade in
+  // and out of thick fog as the camera turns.
   THREE.ShaderChunk.fog_fragment = `
 #ifdef USE_FOG
+  float atmoDist = length( vFogDir );
   #ifdef FOG_EXP2
-    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * atmoDist * atmoDist );
   #else
-    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+    float fogFactor = smoothstep( fogNear, fogFar, atmoDist );
   #endif
   vec3 atmoDir = normalize( vFogDir );
   float atmoH = cameraPosition.y + vFogDir.y;

@@ -4,8 +4,9 @@ import compound from './compound.js';
 import arena from './arena.js';
 import embassy from './embassy.js';
 import depot from './depot.js';
+import gulag from './gulag.js';
 
-export const MAP_DEFS = [sandstone, compound, embassy, arena, depot];
+export const MAP_DEFS = [sandstone, compound, embassy, arena, depot, gulag];
 
 const cache = new Map();
 

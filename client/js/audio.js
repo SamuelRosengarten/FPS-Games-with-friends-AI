@@ -685,62 +685,133 @@ export class AudioEngine {
     this.ambient = { g, nodes };
   }
 
-  // Rain loop: the hiss of drops plus the body of the downpour (and gusts of wind in a storm). Indoors
-  // it is muffled and quieter, like hearing it on the roof.
+  // A seamless stereo rain bed, rendered once per intensity: soft band-limited wash (independent per ear,
+  // so it surrounds the listener instead of hissing in the middle of the head) plus thousands of
+  // individual drops — tiny damped ticks at random pitch, loudness and position — that give rain its
+  // texture. Long enough (9 s) and crossfaded at the seam so the loop can't be heard repeating.
+  rainBed(intensity) {
+    const key = Math.round(intensity * 4) / 4;
+    this.rainBeds = this.rainBeds || new Map();
+    if (this.rainBeds.has(key)) return this.rainBeds.get(key);
+    const ctx = this.ctx, sr = ctx.sampleRate;
+    const secs = 9, fade = Math.floor(sr * 0.6);
+    const n = Math.floor(sr * secs) + fade;
+    const L = new Float32Array(n), R = new Float32Array(n);
+    let seed = 1234567 + key * 1000;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    // wash: white noise through a gentle band-pass (~180 Hz .. ~5 kHz), a separate stream per channel
+    for (const ch of [L, R]) {
+      let hp = 0, lpA = 0, lpB = 0, prev = 0;
+      const aHp = Math.exp(-2 * Math.PI * 180 / sr), aLp = 1 - Math.exp(-2 * Math.PI * 5000 / sr);
+      for (let i = 0; i < n; i++) {
+        const w = rnd() * 2 - 1;
+        hp = aHp * (hp + w - prev); prev = w;
+        lpA += aLp * (hp - lpA);
+        lpB += aLp * (lpA - lpB);
+        ch[i] = lpB * 0.22;
+      }
+    }
+    // drops: damped sine ticks. Small far drops are many and quiet; a few near ones splat lower and louder.
+    const drop = (t, freq, amp, dec, pan) => {
+      const i0 = Math.floor(t * sr), len = Math.min(n - i0, Math.floor(dec * 6 * sr));
+      const w = 2 * Math.PI * freq / sr, k = Math.exp(-1 / (dec * sr));
+      const gl = amp * Math.cos(pan * Math.PI / 2), gr = amp * Math.sin(pan * Math.PI / 2);
+      let e = 1;
+      for (let j = 0; j < len; j++) {
+        const att = j < 24 ? j / 24 : 1; // no clicks
+        const v = Math.sin(w * j) * e * att;
+        L[i0 + j] += v * gl; R[i0 + j] += v * gr;
+        e *= k;
+      }
+    };
+    const total = n / sr;
+    const far = Math.round(total * (260 + 220 * key));
+    for (let d = 0; d < far; d++) {
+      drop(rnd() * total, 1800 + rnd() * 4200, 0.02 + 0.06 * Math.pow(rnd(), 3), 0.0015 + rnd() * 0.003, rnd());
+    }
+    const near = Math.round(total * (10 + 14 * key));
+    for (let d = 0; d < near; d++) {
+      drop(rnd() * total, 500 + rnd() * 1300, 0.05 + 0.12 * rnd() * rnd(), 0.004 + rnd() * 0.006, 0.15 + rnd() * 0.7);
+    }
+    // crossfade the tail into the head so the loop is seamless, then normalise
+    const len = n - fade;
+    const buf = ctx.createBuffer(2, len, sr);
+    let peak = 1e-6;
+    for (const [c, src] of [[0, L], [1, R]]) {
+      const out = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) {
+        let v = src[i];
+        if (i < fade) { const t = i / fade; v = v * Math.sqrt(t) + src[len + i] * Math.sqrt(1 - t); }
+        out[i] = v;
+        peak = Math.max(peak, Math.abs(v));
+      }
+    }
+    for (let c = 0; c < 2; c++) { const out = buf.getChannelData(c); for (let i = 0; i < len; i++) out[i] *= 0.9 / peak; }
+    this.rainBeds.set(key, buf);
+    return buf;
+  }
+
+  // Rain loop: the rain bed plus a low rumble of the downpour (and gusts of wind in a storm). Indoors it
+  // is muffled and quieter, like hearing it on the roof.
   startRain(intensity = 1, storm = false) {
     if (!this.ctx || intensity <= 0) return;
     this.stopRain();
     const ctx = this.ctx, t = ctx.currentTime;
     const g = ctx.createGain();
-    g.gain.value = 0;
-    const level = 0.045 + intensity * 0.04;
-    g.gain.linearRampToValueAtTime(level, t + 2.5);
+    const level = 0.1 + intensity * 0.05;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(level, t + 3);
     const indoor = ctx.createGain();
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 8000;
-    lp.connect(indoor).connect(g).connect(this.sfx);
-    const hiss = this.noiseSrc(this.noise);
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 1300;
-    const pk = ctx.createBiquadFilter();
-    pk.type = 'peaking';
-    pk.frequency.value = 4200;
-    pk.gain.value = 5;
-    const hg = ctx.createGain();
-    hg.gain.value = 0.55;
-    hiss.connect(hp).connect(pk).connect(hg).connect(lp);
+    lp.frequency.value = 12000;
+    lp.Q.value = 0.5;
+    // tame the upper treble a little more (no harsh hiss)
+    const shelf = ctx.createBiquadFilter();
+    shelf.type = 'highshelf';
+    shelf.frequency.value = 6000;
+    shelf.gain.value = -6;
+    lp.connect(shelf).connect(indoor).connect(g).connect(this.sfx);
+    const bed = ctx.createBufferSource();
+    bed.buffer = this.rainBed(intensity);
+    bed.loop = true;
+    bed.connect(lp);
     const body = this.noiseSrc(this.pink);
     const bl = ctx.createBiquadFilter();
     bl.type = 'lowpass';
-    bl.frequency.value = 800;
+    bl.frequency.value = 420;
     const bg = ctx.createGain();
-    bg.gain.value = 1.3;
+    bg.gain.value = 0.35 + 0.15 * intensity;
     body.connect(bl).connect(bg).connect(lp);
+    // slow swell in the downpour's strength
     const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.08;
+    lfo.frequency.value = 0.05;
     const lg = ctx.createGain();
-    lg.gain.value = level * 0.2;
+    lg.gain.value = level * 0.12;
     lfo.connect(lg).connect(g.gain);
-    hiss.start(); body.start(); lfo.start();
-    const nodes = [hiss, body, lfo];
+    bed.start(t, Math.random() * bed.buffer.duration); body.start(t, Math.random() * 1.5); lfo.start(t);
+    const nodes = [bed, body, lfo];
     if (storm) {
       const wind = this.noiseSrc(this.pink);
       const wf = ctx.createBiquadFilter();
       wf.type = 'bandpass';
-      wf.frequency.value = 380;
-      wf.Q.value = 0.8;
+      wf.frequency.value = 320;
+      wf.Q.value = 0.6;
       const wl = ctx.createOscillator();
-      wl.frequency.value = 0.13;
+      wl.frequency.value = 0.09;
       const wlg = ctx.createGain();
-      wlg.gain.value = 220;
+      wlg.gain.value = 140;
       wl.connect(wlg).connect(wf.frequency);
       const wg = ctx.createGain();
-      wg.gain.value = 1.1;
+      wg.gain.value = 0.5;
+      const wl2 = ctx.createOscillator(); // gusts: the wind's loudness rises and falls too
+      wl2.frequency.value = 0.037;
+      const wl2g = ctx.createGain();
+      wl2g.gain.value = 0.25;
+      wl2.connect(wl2g).connect(wg.gain);
       wind.connect(wf).connect(wg).connect(g);
-      wind.start(); wl.start();
-      nodes.push(wind, wl);
+      wind.start(); wl.start(); wl2.start();
+      nodes.push(wind, wl, wl2);
     }
     this.rain = { g, lp, indoor, nodes, k: -1 };
   }
@@ -750,8 +821,8 @@ export class AudioEngine {
     if (!r || Math.abs(k - r.k) < 0.02) return;
     r.k = k;
     const t = this.ctx.currentTime;
-    r.lp.frequency.setTargetAtTime(8000 - 7100 * k, t, 0.35);
-    r.indoor.gain.setTargetAtTime(1 - 0.45 * k, t, 0.35);
+    r.lp.frequency.setTargetAtTime(12000 - 11000 * k, t, 0.35);
+    r.indoor.gain.setTargetAtTime(1 - 0.4 * k, t, 0.35);
   }
 
   stopRain() {
