@@ -192,6 +192,41 @@ function awningTex(c1, c2) {
   }, true, false));
 }
 
+// Unlit decal that multiplies the colour already in the frame: out = dst * mix(1, texel, alpha), fading
+// out into the fog.
+function multiplyDecalMaterial(map) {
+  return new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { map: { value: map } }]),
+    vertexShader: /* glsl */`
+      varying vec2 vUv;
+      varying float vDist;
+      void main() {
+        vUv = uv;
+        vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        vDist = length(mvPosition.xyz);
+        gl_Position = projectionMatrix * mvPosition;
+      }`,
+    fragmentShader: /* glsl */`
+      uniform sampler2D map;
+      varying vec2 vUv;
+      varying float vDist;
+      #ifdef USE_FOG
+        uniform float fogNear, fogFar;
+      #endif
+      void main() {
+        vec4 t = texture2D(map, vUv);
+        float a = t.a;
+        #ifdef USE_FOG
+          a *= 1.0 - smoothstep(fogNear, fogFar, vDist);
+        #endif
+        gl_FragColor = vec4(mix(vec3(1.0), t.rgb, a), 1.0);
+      }`,
+    fog: true, transparent: true, depthWrite: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.DstColorFactor, blendDst: THREE.ZeroFactor,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+  });
+}
+
 function decalTex(kind) {
   return cached('decal' + kind, () => canvasTex(128, 128, (g, w, h) => {
     g.clearRect(0, 0, w, h);
@@ -216,11 +251,12 @@ function decalTex(kind) {
         g.fillRect(0, 0, w, h);
       }
     } else if (kind === 'sand') {
+      // (multiplied onto the ground: patches of warmer, compacted sand)
       for (let k = 0; k < 7; k++) {
         const x = 64 + (Math.random() - 0.5) * 60, y = 64 + (Math.random() - 0.5) * 60, r = 16 + Math.random() * 28;
         const grd = g.createRadialGradient(x, y, 0, x, y, r);
-        grd.addColorStop(0, 'rgba(214,186,138,0.55)');
-        grd.addColorStop(1, 'rgba(214,186,138,0)');
+        grd.addColorStop(0, 'rgba(206,172,128,0.4)');
+        grd.addColorStop(1, 'rgba(206,172,128,0)');
         g.fillStyle = grd;
         g.fillRect(0, 0, w, h);
       }
@@ -907,7 +943,11 @@ export class Decor {
     kinds.forEach((kind, i) => {
       const list = lists[i];
       if (!list.length) return;
-      const mat = new THREE.MeshStandardMaterial({ map: decalTex(kind), transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+      // cracks, stains and sand tint the ground under them (multiplied, so they always match its lighting
+      // and baked shading instead of glowing in shade); leaves are lit like the objects they are
+      const mat = kind === 'leaves'
+        ? new THREE.MeshStandardMaterial({ map: decalTex(kind), transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })
+        : multiplyDecalMaterial(decalTex(kind));
       const mesh = new THREE.InstancedMesh(geo, mat, list.length);
       list.forEach(([x, z, s, rot], j) => {
         tmpM.compose(tmpP.set(x, 0.006 + i * 0.001, z), tmpQ.setFromAxisAngle(UP, rot), tmpS.set(s, 1, s));
@@ -1098,6 +1138,16 @@ export class Decor {
         const [x, z] = W(-0.2, 0.33);
         tmpM.compose(tmpP.set(x, y, z), tmpQ.setFromEuler(new THREE.Euler(Math.PI / 2, f.rot, 0, 'YXZ')), tmpS.set(1, 1, 1));
         dark.add(new THREE.CylinderGeometry(0.17, 0.17, 0.012, 20), tmpM);
+        // fan guard: concentric rings and a cross over the dark fan opening
+        const [gx, gz] = W(-0.2, 0.34);
+        for (const rr of [0.05, 0.1, 0.15]) {
+          tmpM.compose(tmpP.set(gx, y, gz), tmpQ.setFromEuler(new THREE.Euler(0, f.rot, 0, 'YXZ')), tmpS.set(1, 1, 1));
+          white.add(new THREE.TorusGeometry(rr, 0.005, 4, 24), tmpM);
+        }
+        bx(white, 0.33, 0.012, 0.01, -0.2, y, 0.34);
+        bx(white, 0.012, 0.33, 0.01, -0.2, y, 0.34);
+        // louvred fins over the vent panel
+        for (let k = 0; k < 6; k++) bx(white, 0.42, 0.018, 0.03, 0.13, y - 0.18 + k * 0.072, 0.335);
         for (const sx of [-0.3, 0.3]) bx(grey, 0.04, 0.04, 0.34, sx, y - 0.28, 0.17);
         vcyl(pipes, 0.008, 0.2, y - 0.26, 0.34, 0.05, 6);
       } else if (h < (acc += cfg.ebox || 0)) {
@@ -1120,7 +1170,8 @@ export class Decor {
     }
     this.mesh(white.build(), new THREE.MeshStandardMaterial({ color: 0xd6d3cb, metalness: 0.25, roughness: 0.55 }), { cast: true });
     this.mesh(grey.build(), new THREE.MeshStandardMaterial({ color: 0x8b8f93, metalness: 0.6, roughness: 0.45 }), { cast: true });
-    this.mesh(dark.build(), new THREE.MeshStandardMaterial({ color: 0x2a2b2c, metalness: 0.4, roughness: 0.6 }), { cast: false });
+    // (painted, not bare metal: a metallic dark grey has nothing to reflect in shade and goes pitch black)
+    this.mesh(dark.build(), new THREE.MeshStandardMaterial({ color: 0x2e3032, metalness: 0.1, roughness: 0.7 }), { cast: false });
     this.mesh(pipes.build(), new THREE.MeshStandardMaterial({ color: this.cfg.pipeColor ?? 0x77736b, metalness: 0.5, roughness: 0.5 }), { cast: true });
   }
 

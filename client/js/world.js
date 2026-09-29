@@ -6,15 +6,18 @@ const ZERO_SCALE = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const STRIPS = [0, 0.35, 1.1, 2.4];
 
-// Boxes whose faces lie in the same plane, facing the same way and overlapping (a floor slab ending flush
-// with a wall's outer face, a roof flush with the wall tops, a lintel inside a wall) would draw two
-// surfaces at exactly the same depth, which flicker in stripes (z-fighting). The box with the lower
-// priority pulls that face 1 cm back into itself, so only one surface is visible there.
+// Boxes whose side faces lie in the same plane, facing the same way and overlapping (a floor slab ending
+// flush with a wall's outer face) would draw two surfaces at exactly the same depth, which flicker in
+// stripes (z-fighting). The box with the lower priority pulls that face 1 cm back into itself, so only
+// one surface is visible there.
 const PULL = 0.01;
 const rank = (b) => (b.kind === 'wall' ? 0 : 1);
 function pullBackCoplanar(boxes) {
   const out = boxes.map((b) => ({ ...b, min: [...b.min], max: [...b.max] }));
   const overlap = (a, b, ax) => Math.min(a.max[ax], b.max[ax]) - Math.max(a.min[ax], b.min[ax]) > 0.01;
+  // another box butts against this face from outside (pulling it back would open a slit between them)
+  const abutted = (a, ax, side) => boxes.some((c) => c !== a && overlap(a, c, 1) && overlap(a, c, 2 - ax)
+    && Math.abs((side > 0 ? c.min[ax] : c.max[ax]) - (side > 0 ? a.max[ax] : a.min[ax])) < 1e-4);
   for (let i = 0; i < boxes.length; i++) {
     const a = boxes[i];
     for (let j = 0; j < boxes.length; j++) {
@@ -22,12 +25,14 @@ function pullBackCoplanar(boxes) {
       const b = boxes[j];
       const ra = rank(a), rb = rank(b);
       if (rb > ra || (rb === ra && j > i)) continue; // only yield to walls, or to earlier boxes of the same rank
-      for (let ax = 0; ax < 3; ax++) {
-        const o1 = (ax + 1) % 3, o2 = (ax + 2) % 3;
-        if (!overlap(a, b, o1) || !overlap(a, b, o2)) continue;
-        if (Math.abs(a.max[ax] - b.max[ax]) < 1e-4) out[i].max[ax] = a.max[ax] - PULL;
-        // (a bottom face resting on the floor isn't drawn; lifting it would open a gap)
-        if (Math.abs(a.min[ax] - b.min[ax]) < 1e-4 && !(ax === 1 && a.min[1] <= (a.floorY || 0) + 0.01)) out[i].min[ax] = a.min[ax] + PULL;
+      if (a.mat === b.mat) continue; // same texture in the same place: nothing to see
+      // Only vertical faces: floors, ceilings and wall tops meet other boxes edge to edge, and moving a
+      // whole horizontal face would open a slit of light along those joints.
+      for (const ax of [0, 2]) {
+        const o = 2 - ax;
+        if (!overlap(a, b, 1) || !overlap(a, b, o)) continue;
+        if (Math.abs(a.max[ax] - b.max[ax]) < 1e-4 && !abutted(a, ax, 1)) out[i].max[ax] = a.max[ax] - PULL;
+        if (Math.abs(a.min[ax] - b.min[ax]) < 1e-4 && !abutted(a, ax, -1)) out[i].min[ax] = a.min[ax] + PULL;
       }
     }
   }
